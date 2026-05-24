@@ -1,0 +1,22 @@
+{
+  "name": "scan2bim-tracker",
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "concurrently \"npm run server\" \"npm run client\"",
+    "server": "node server/index.js",
+    "client": "cd client && npm run dev",
+    "build": "cd client && npm install && npm run build",
+    "start": "node server/index.js",
+    "install:all": "npm install && cd client && npm install"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "googleapis": "^172.0.0",
+    "serverless-http": "^3.2.0",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}

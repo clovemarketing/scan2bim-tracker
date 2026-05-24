@@ -1,0 +1,787 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body { @apply bg-slate-50 text-slate-800; }
+  * { @apply box-border; }
+}
+
+@layer components {
+  .page { @apply p-3 sm:p-6 max-w-full; }
+  .page-title { @apply text-2xl font-bold text-slate-800 mb-1; }
+  .page-sub { @apply text-sm text-slate-500 mb-6; }
+  .card { @apply bg-white rounded-xl shadow-sm border border-slate-100 p-5; }
+  .btn { @apply inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed; }
+  .btn-primary { @apply btn bg-indigo-600 text-white hover:bg-indigo-700 active:bg-indigo-800; }
+  .btn-secondary { @apply btn bg-white text-slate-700 border border-slate-200 hover:bg-slate-50; }
+  .btn-danger { @apply btn bg-red-600 text-white hover:bg-red-700; }
+  .btn-success { @apply btn bg-emerald-600 text-white hover:bg-emerald-700; }
+  .input { @apply w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent bg-white; }
+  .label { @apply block text-xs font-medium text-slate-600 mb-1; }
+  .badge { @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium; }
+  .th { @apply px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider cursor-pointer select-none hover:text-slate-700; }
+  .td { @apply px-4 py-3 text-sm text-slate-700 whitespace-nowrap; }
+  .tr { @apply border-b border-slate-50 hover:bg-indigo-50/40 transition-colors; }
+}
+
+/* ============================================
+   Skeleton Loading Animation
+   ============================================ */
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: #e2e8f0;
+  border-radius: 6px;
+}
+
+.skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.4) 50%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.8s ease-in-out infinite;
+}
+
+@keyframes skeleton-shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.skeleton-circle {
+  border-radius: 50%;
+}
+
+.skeleton-icon-box {
+  border-radius: 12px;
+}
+
+/* ============================================
+   Loading Screen — Glass Card with Shiny Border
+   ============================================ */
+
+/* Animate conic gradient angle for a traveling shine on the border */
+@property --angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+
+/* Full-screen overlay with backdrop blur */
+.loading-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 23, 42, 0.15);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+/* Centering container */
+.loading-root {
+  --glass-bg: rgb(255 255 255 / 0.65);
+  --glass-bg-solid: #ffffff;
+  --text-color: #64748b;
+  --accent: #7c3aed;
+  --accent-light: #a78bfa;
+  --shimmer-color: rgb(255 255 255 / 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  width: 100%;
+}
+
+@media (prefers-color-scheme: dark) {
+  .loading-overlay {
+    background: rgb(0 0 0 / 0.3);
+  }
+  .loading-root {
+    --glass-bg: rgb(30 41 59 / 0.7);
+    --glass-bg-solid: #1e293b;
+    --text-color: #94a3b8;
+    --accent: #a78bfa;
+    --accent-light: #c4b5fd;
+    --shimmer-color: rgb(255 255 255 / 0.15);
+  }
+}
+
+/* ===== Loading Text Card (Glass + Shiny Border) ===== */
+.loader {
+  position: relative;
+  color: var(--text-color);
+  font-family: 'Poppins', sans-serif;
+  font-weight: 500;
+  font-size: 13px;
+  box-sizing: content-box;
+  height: 20px;
+  padding: 6px 8px;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  border-radius: 8px;
+  background: var(--glass-bg);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  box-shadow:
+    0 8px 32px rgb(124 58 237 / 0.1),
+    0 1px 4px rgb(0 0 0 / 0.04);
+  isolation: isolate;
+}
+
+@media (min-width: 640px) {
+  .loader {
+    font-size: 18px;
+    height: 32px;
+    padding: 10px 14px;
+    gap: 6px;
+    border-radius: 12px;
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  .loader {
+    box-shadow:
+      0 8px 32px rgb(0 0 0 / 0.25),
+      0 1px 4px rgb(0 0 0 / 0.1);
+  }
+}
+
+/* ===== Neon Glow Border (outer, blurred) ===== */
+.loader::before {
+  content: '';
+  position: absolute;
+  inset: -12px;
+  border-radius: 26px;
+  z-index: -2;
+  background: conic-gradient(
+    from var(--angle),
+    var(--accent) 0%,
+    transparent 10%,
+    transparent 35%,
+    var(--accent-light) 40%,
+    var(--accent-light) 50%,
+    transparent 55%,
+    transparent 85%,
+    var(--accent) 90%,
+    var(--accent) 100%
+  );
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  padding: 12px;
+  animation: border-shine 2s linear infinite;
+  filter: blur(12px);
+  opacity: 0.85;
+  pointer-events: none;
+}
+
+/* ===== Crisp Shiny Border (inner, on top of glow) ===== */
+.loader::after {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border-radius: 16px;
+  z-index: -1;
+  background: conic-gradient(
+    from var(--angle),
+    var(--accent) 0%,
+    transparent 10%,
+    transparent 35%,
+    var(--accent-light) 40%,
+    var(--accent-light) 50%,
+    transparent 55%,
+    transparent 85%,
+    var(--accent) 90%,
+    var(--accent) 100%
+  );
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  padding: 2px;
+  animation: border-shine 2s linear infinite;
+  pointer-events: none;
+}
+
+@keyframes border-shine {
+  to {
+    --angle: 360deg;
+  }
+}
+
+/* ===== Glass Shimmer Sweep across the card face ===== */
+.shimmer-sweep {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  z-index: 1;
+  background: linear-gradient(
+    105deg,
+    transparent 20%,
+    var(--shimmer-color) 45%,
+    var(--shimmer-color) 55%,
+    transparent 80%
+  );
+  animation: shimmer-sweep 3s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes shimmer-sweep {
+  0% {
+    transform: translateX(-120%) skewX(-15deg);
+  }
+  40% {
+    transform: translateX(0%) skewX(-15deg);
+  }
+  60% {
+    transform: translateX(0%) skewX(-15deg);
+  }
+  100% {
+    transform: translateX(120%) skewX(-15deg);
+  }
+}
+
+/* Ensure text sits above pseudo-elements */
+.loader > * {
+  position: relative;
+  z-index: 3;
+}
+
+/* ===== Word Animation ===== */
+.words {
+  overflow: hidden;
+  position: relative;
+  height: 16px;
+  min-width: 60px;
+}
+
+.word {
+  display: block;
+  height: 16px;
+  line-height: 16px;
+  padding-left: 3px;
+  color: var(--accent);
+  font-weight: 600;
+  animation: spin_4991 4s infinite;
+}
+
+@media (min-width: 640px) {
+  .words {
+    height: 22px;
+    min-width: 80px;
+  }
+  .word {
+    height: 22px;
+    line-height: 22px;
+    padding-left: 4px;
+  }
+}
+
+@keyframes spin_4991 {
+  10%   { transform: translateY(-102%); }
+  25%   { transform: translateY(-100%); }
+  35%   { transform: translateY(-202%); }
+  50%   { transform: translateY(-200%); }
+  60%   { transform: translateY(-302%); }
+  75%   { transform: translateY(-300%); }
+  85%   { transform: translateY(-402%); }
+  100%  { transform: translateY(-400%); }
+}
+
+/* ============================================
+   Greeting Weather Card
+   ============================================ */
+.greeting-card {
+  width: 280px;
+  height: 125px;
+  position: relative;
+  padding: 18px 22px;
+  box-shadow: 0px 155px 62px rgba(0, 0, 0, 0.01), 0px 87px 52px rgba(0, 0, 0, 0.05), 0px 39px 39px rgba(0, 0, 0, 0.09), 0px 10px 21px rgba(0, 0, 0, 0.1), 0px 0px 0px rgba(0, 0, 0, 0.1);
+  border-radius: 23px;
+  transition: all 0.8s cubic-bezier(0.15, 0.83, 0.66, 1);
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.greeting-card:hover {
+  transform: scale(1.03);
+}
+
+/* ===== Welcome Animation Overlay ===== */
+.greeting-card-wrapper {
+  position: relative;
+}
+
+.welcome-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border-radius: 23px;
+  background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #a78bfa 100%);
+  box-shadow: 0px 155px 62px rgba(0,0,0,0.01), 0px 87px 52px rgba(0,0,0,0.05), 0px 39px 39px rgba(0,0,0,0.09), 0px 10px 21px rgba(0,0,0,0.1), 0px 0px 0px rgba(0,0,0,0.1);
+}
+
+.welcome-greeting {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.welcome-wave {
+  font-size: 24px;
+  animation: wave-hand 1.5s ease-in-out infinite;
+  display: inline-block;
+  transform-origin: 70% 70%;
+}
+
+@keyframes wave-hand {
+  0% { transform: rotate(0deg); }
+  15% { transform: rotate(14deg); }
+  30% { transform: rotate(-8deg); }
+  45% { transform: rotate(14deg); }
+  60% { transform: rotate(-4deg); }
+  75% { transform: rotate(10deg); }
+  100% { transform: rotate(0deg); }
+}
+
+.welcome-text-line {
+  font-size: 18px;
+  font-weight: 700;
+  color: white;
+  text-shadow: 0 1px 8px rgba(0,0,0,0.15);
+}
+
+.welcome-sub {
+  font-size: 11px;
+  color: rgba(255,255,255,0.75);
+  font-weight: 500;
+  letter-spacing: 0.3px;
+}
+
+/* Welcome entry animation */
+.welcome-enter {
+  animation: welcome-in 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes welcome-in {
+  0% {
+    opacity: 0;
+    transform: scale(0.8) translateY(20px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+/* Welcome exit animation */
+.welcome-exit {
+  animation: welcome-out 0.5s cubic-bezier(0.55, 0, 1, 0.45) forwards;
+}
+
+@keyframes welcome-out {
+  0% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.85) translateY(-20px);
+  }
+}
+
+/* Card hidden state (behind welcome) */
+.card-hidden {
+  opacity: 0;
+  transform: scale(0.85);
+}
+
+.card-pre-enter {
+  opacity: 0;
+  transform: scale(0.85);
+}
+
+/* Card enter animation */
+.card-enter {
+  animation: card-in 0.7s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes card-in {
+  0% {
+    opacity: 0;
+    transform: scale(0.85);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* ── Weather art container ── */
+.weather-art {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  border-radius: 23px;
+}
+
+/* ── Sun ── */
+.weather-sun {
+  position: absolute;
+  right: 20px;
+  top: -10px;
+  width: 70px;
+  height: 70px;
+  background: linear-gradient(to right, #fcbb04, #fffc00);
+  border-radius: 50%;
+  box-shadow: 0 0 40px #fcbb04;
+}
+
+.weather-sun.glow {
+  animation: sunshines 2s infinite;
+}
+
+@keyframes sunshines {
+  0% { transform: scale(1); opacity: 0.6; }
+  100% { transform: scale(1.4); opacity: 0; }
+}
+
+/* ── Moon ── */
+.weather-moon {
+  position: absolute;
+  right: 25px;
+  top: 0px;
+  width: 55px;
+  height: 55px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, #f5f3ce, #e8e4b0);
+  box-shadow: 0 0 30px rgba(245, 243, 206, 0.4);
+}
+
+.weather-moon::after {
+  content: '';
+  position: absolute;
+  top: -8px;
+  left: 10px;
+  width: 45px;
+  height: 45px;
+  border-radius: 50%;
+  background: inherit;
+  filter: brightness(0.7);
+}
+
+/* ── Stars ── */
+.star {
+  position: absolute;
+  width: 3px;
+  height: 3px;
+  background: white;
+  border-radius: 50%;
+  animation: twinkle 2s ease-in-out infinite alternate;
+}
+
+.star:nth-child(2n) { animation-delay: 0.7s; width: 2px; height: 2px; }
+.star:nth-child(3n) { animation-delay: 1.4s; width: 4px; height: 4px; }
+.star:nth-child(5n) { animation-delay: 0.3s; }
+.star:nth-child(7n) { animation-delay: 1s; }
+.star:nth-child(11n) { animation-delay: 1.8s; width: 2px; height: 2px; }
+
+@keyframes twinkle {
+  0% { opacity: 0.2; transform: scale(0.8); }
+  100% { opacity: 1; transform: scale(1.2); }
+}
+
+/* ── Clouds (fluffy redesign) ── */
+.weather-cloud {
+  position: absolute;
+}
+
+.weather-cloud.front {
+  right: 35px;
+  top: 20px;
+  z-index: 11;
+  animation: drift 8s infinite ease-in-out;
+}
+
+.weather-cloud.back {
+  right: -5px;
+  top: -12px;
+  z-index: 9;
+  animation: drift 12s infinite ease-in-out;
+}
+
+.cloud-body {
+  position: relative;
+  width: 80px;
+  height: 35px;
+  border-radius: 50px;
+}
+
+.cloud-body::before,
+.cloud-body::after {
+  content: '';
+  position: absolute;
+  border-radius: 50%;
+}
+
+.cloud-body::before {
+  width: 35px;
+  height: 35px;
+  top: -16px;
+  left: 8px;
+}
+
+.cloud-body::after {
+  width: 28px;
+  height: 28px;
+  top: -10px;
+  right: 8px;
+}
+
+/* Extra fluffy bumps */
+.cloud-bump {
+  position: absolute;
+  border-radius: 50%;
+}
+
+/* Front cloud bumps */
+.cloud-front .cloud-body {
+  width: 85px;
+  height: 32px;
+}
+
+.cloud-front .cloud-body::before {
+  width: 38px;
+  height: 38px;
+  top: -18px;
+  left: 10px;
+}
+
+.cloud-front .cloud-body::after {
+  width: 30px;
+  height: 30px;
+  top: -12px;
+  right: 12px;
+}
+
+.cloud-front .cloud-bump {
+  width: 22px;
+  height: 22px;
+  top: -8px;
+  left: 40px;
+}
+
+/* Back cloud bumps */
+.cloud-back .cloud-body {
+  width: 70px;
+  height: 28px;
+}
+
+.cloud-back .cloud-body::before {
+  width: 32px;
+  height: 32px;
+  top: -16px;
+  left: 6px;
+}
+
+.cloud-back .cloud-body::after {
+  width: 24px;
+  height: 24px;
+  top: -10px;
+  right: 10px;
+}
+
+.cloud-back .cloud-bump {
+  width: 18px;
+  height: 18px;
+  top: -6px;
+  left: 34px;
+}
+
+/* Cloud colors */
+.cloud-blue {
+  background: #7ab0e8;
+  box-shadow: 0 4px 15px rgba(122, 176, 232, 0.25);
+}
+.cloud-blue::before,
+.cloud-blue::after,
+.cloud-blue .cloud-bump {
+  background: #7ab0e8;
+}
+
+.cloud-grey {
+  background: #8a9aa8;
+  box-shadow: 0 4px 15px rgba(138, 154, 168, 0.2);
+}
+.cloud-grey::before,
+.cloud-grey::after,
+.cloud-grey .cloud-bump {
+  background: #8a9aa8;
+}
+
+.cloud-dark {
+  background: #4a5a6a;
+  box-shadow: 0 4px 15px rgba(74, 90, 106, 0.2);
+}
+.cloud-dark::before,
+.cloud-dark::after,
+.cloud-dark .cloud-bump {
+  background: #4a5a6a;
+}
+
+@keyframes drift {
+  0% { transform: translateX(6px); }
+  50% { transform: translateX(-6px); }
+  100% { transform: translateX(6px); }
+}
+
+/* ── Rain ── */
+.rain-container {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+.raindrop {
+  position: absolute;
+  width: 1.5px;
+  background: linear-gradient(to bottom, transparent, rgba(174, 194, 224, 0.6));
+  animation: rain-fall 1s linear infinite;
+}
+
+.raindrop:nth-child(2n) { animation-duration: 0.8s; animation-delay: 0.2s; left: 10%; }
+.raindrop:nth-child(3n) { animation-duration: 1.2s; animation-delay: 0.5s; left: 25%; }
+.raindrop:nth-child(4n) { animation-duration: 0.9s; animation-delay: 0.1s; left: 40%; }
+.raindrop:nth-child(5n) { animation-duration: 1.1s; animation-delay: 0.7s; left: 55%; }
+.raindrop:nth-child(6n) { animation-duration: 0.7s; animation-delay: 0.3s; left: 70%; }
+.raindrop:nth-child(7n) { animation-duration: 1s; animation-delay: 0.9s; left: 85%; }
+.raindrop:nth-child(8n) { animation-duration: 0.85s; animation-delay: 0.4s; left: 92%; }
+
+@keyframes rain-fall {
+  0% { top: -10%; height: 10px; opacity: 0; }
+  10% { opacity: 0.6; }
+  90% { opacity: 0.6; }
+  100% { top: 110%; height: 15px; opacity: 0; }
+}
+
+/* ── Lightning ── */
+.lightning {
+  position: absolute;
+  right: 30px;
+  top: -5px;
+  font-size: 50px;
+  color: #ffdd57;
+  opacity: 0;
+  animation: lightning-flash 4s infinite;
+}
+
+@keyframes lightning-flash {
+  0%, 92%, 96%, 100% { opacity: 0; }
+  93%, 95% { opacity: 1; }
+  97%, 99% { opacity: 0.6; }
+}
+
+/* ── Snow ── */
+.snowflake {
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  background: white;
+  border-radius: 50%;
+  opacity: 0.7;
+  animation: snow-fall 3s linear infinite;
+}
+
+.snowflake:nth-child(2n) { animation-duration: 3.5s; animation-delay: 0.3s; left: 15%; }
+.snowflake:nth-child(3n) { animation-duration: 2.5s; animation-delay: 0.8s; left: 30%; }
+.snowflake:nth-child(4n) { animation-duration: 4s; animation-delay: 0.1s; left: 50%; }
+.snowflake:nth-child(5n) { animation-duration: 2.8s; animation-delay: 1.2s; left: 65%; }
+.snowflake:nth-child(6n) { animation-duration: 3.2s; animation-delay: 0.5s; left: 80%; }
+.snowflake:nth-child(7n) { animation-duration: 3.8s; animation-delay: 0.9s; left: 90%; }
+
+@keyframes snow-fall {
+  0% { top: -5%; opacity: 0; transform: translateX(0); }
+  10% { opacity: 0.8; }
+  50% { transform: translateX(8px); }
+  90% { opacity: 0.8; }
+  100% { top: 110%; opacity: 0; transform: translateX(-5px); }
+}
+
+/* ── Fog ── */
+.fog-layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+.fog-puff {
+  position: absolute;
+  bottom: 0;
+  width: 100%;
+  height: 30px;
+  background: linear-gradient(to right, transparent, rgba(200, 210, 220, 0.4), transparent);
+  border-radius: 50%;
+  animation: fog-drift 6s ease-in-out infinite alternate;
+}
+
+.fog-puff:nth-child(2) { bottom: 15px; animation-delay: 2s; height: 20px; opacity: 0.5; }
+.fog-puff:nth-child(3) { bottom: 30px; animation-delay: 4s; height: 15px; opacity: 0.3; }
+
+@keyframes fog-drift {
+  0% { transform: translateX(-20px); }
+  100% { transform: translateX(20px); }
+}
+
+/* ── Fluid Fill shimmer for target bars ── */
+@keyframes shimmer-slide {
+  0% { background-position: 0% 50%; }
+  100% { background-position: 200% 50%; }
+}
+
+/* ── Custom Scrollbar ── */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #6366f1;
+  border-radius: 8px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #4f46e5;
+}
+
+/* Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #6366f1 transparent;
+}
