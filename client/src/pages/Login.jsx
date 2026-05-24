@@ -41,10 +41,9 @@ export default function Login({ onLogin }) {
         {/* Logo */}
         <div>
           <img
-            src="https://cloveid.netlify.app/assets/CLOVE%20LOGO%20BLACK-CfaGgA5m.png"
+            src="/CLOVE%20LOGO%20WHITE%20(1).png"
             alt="Clove Tech"
             className="h-9 w-auto object-contain"
-            style={{ filter: 'brightness(0) invert(1)' }}
           />
         </div>
 
@@ -88,7 +87,7 @@ export default function Login({ onLogin }) {
           {/* Mobile logo + title */}
           <div className="lg:hidden text-center mb-6 sm:mb-8">
             <img
-              src="https://cloveid.netlify.app/assets/CLOVE%20LOGO%20BLACK-CfaGgA5m.png"
+              src="/CLOVE%20LOGO%20BLACK-CfaGgA5m.png"
               alt="Clove Tech"
               className="h-7 sm:h-8 w-auto object-contain mx-auto mb-3 sm:mb-4"
             />

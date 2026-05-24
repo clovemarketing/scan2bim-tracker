@@ -2794,6 +2794,51 @@ app.get('/api/health', async (req, res) => {
   }
 });
 
+// ── OpenRouter key proxy ──────────────────────────────────────────────────────
+// Serves the API key at runtime so it works from Netlify env vars (no rebuild needed)
+app.get('/api/openrouter-key', (req, res) => {
+  res.json({ key: process.env.VITE_OPENROUTER_API_KEY || process.env.OPENROUTER_API_KEY || '' });
+});
+
+// ── Ollama proxy ──────────────────────────────────────────────────────────────
+// Proxies Ollama requests through the server to avoid CORS on deployed sites
+const http = require('http');
+
+function ollamaProxy(req, res) {
+  const host = req.query.host || 'http://localhost:11434';
+  const target = host.replace(/\/+$/, '');
+  const path = req.params[0] || '';
+
+  const options = {
+    hostname: new URL(target).hostname,
+    port: new URL(target).port || 11434,
+    path: '/' + path,
+    method: req.method,
+    headers: { 'Content-Type': 'application/json' },
+    timeout: 10000,
+  };
+
+  const proxyReq = http.request(options, (proxyRes) => {
+    let data = '';
+    proxyRes.on('data', (chunk) => { data += chunk; });
+    proxyRes.on('end', () => {
+      res.status(proxyRes.statusCode).type('application/json').send(data);
+    });
+  });
+
+  proxyReq.on('error', () => {
+    res.status(502).json({ error: 'Ollama unreachable' });
+  });
+
+  if (req.method !== 'GET' && req.body) {
+    proxyReq.write(JSON.stringify(req.body));
+  }
+  proxyReq.end();
+}
+
+app.get('/api/ollama/proxy/*', ollamaProxy);
+app.post('/api/ollama/proxy/*', ollamaProxy);
+
 // ── Start ─────────────────────────────────────────────────────────────────────
 if (require.main === module) {
   app.listen(PORT, '0.0.0.0', () => console.log(`API → http://0.0.0.0:${PORT}`));

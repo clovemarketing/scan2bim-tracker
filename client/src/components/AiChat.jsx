@@ -270,9 +270,11 @@ function MsgBubble({ msg }) {
 
 // ── Main chat component ───────────────────────────────────────────────────────
 
+const isLocal = typeof window !== 'undefined' && /^localhost|127\.0\.0\.1|\[::1\]$/.test(window.location.hostname);
+
 export default function AiChat({ page = 'dashboard' }) {
   const [open, setOpen]       = useState(false);
-  const [backend, setBackend] = useState(() => localStorage.getItem(LS_BACKEND) || 'ollama');
+  const [backend, setBackend] = useState(() => localStorage.getItem(LS_BACKEND) || (isLocal ? 'ollama' : 'webllm'));
   const [messages, setMessages] = useState([{
     role: 'assistant',
     content: "Hi! I can answer questions about your production, attendance, and efficiency.\n\nTry: **How much production today?** or **Efficiency last 7 days**.",
@@ -309,9 +311,11 @@ export default function AiChat({ page = 'dashboard' }) {
   // Auto-scroll
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
-  // Check Ollama on open
+  // Check Ollama on open (only on localhost — CORS blocked on deployed)
   useEffect(() => {
-    if (open && backend === 'ollama' && olModels === null) probeOllama();
+    if (open && backend === 'ollama' && olModels === null) {
+      if (isLocal) { probeOllama(); } else { setOlModels([]); }
+    }
   }, [open, backend]);
 
   const probeOllama = async () => {
@@ -490,7 +494,7 @@ export default function AiChat({ page = 'dashboard' }) {
             <span className="font-semibold text-sm flex-1">AI Assistant</span>
             <div className="flex gap-1 bg-indigo-700 rounded-lg p-0.5">
               <button
-                onClick={() => { setBackend('ollama'); if (olModels === null) probeOllama(); }}
+                onClick={() => { setBackend('ollama'); if (olModels === null && isLocal) probeOllama(); else if (olModels === null) setOlModels([]); }}
                 className={`flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium transition-all ${backend === 'ollama' ? 'bg-white text-indigo-700' : 'text-indigo-200 hover:text-white'}`}
                 title="Ollama (local server)"
               >
@@ -516,8 +520,8 @@ export default function AiChat({ page = 'dashboard' }) {
               ) : olModels.length === 0 ? (
                 <>
                   <span className="w-2 h-2 rounded-full bg-red-400 shrink-0" />
-                  <span className="text-red-600">Ollama not reachable</span>
-                  <button onClick={probeOllama} className="ml-auto text-slate-500 hover:text-slate-700"><RefreshCw size={11} /></button>
+                  <span className="text-red-600">{isLocal ? 'Ollama not reachable' : 'Ollama only on localhost'}</span>
+                  {isLocal && <button onClick={probeOllama} className="ml-auto text-slate-500 hover:text-slate-700"><RefreshCw size={11} /></button>}
                 </>
               ) : (
                 <>

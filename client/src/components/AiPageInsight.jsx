@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Sparkles, X, RefreshCw, ChevronDown, ChevronUp, AlertCircle } from 'lucide-react';
-import { streamOpenRouter, getOrKey, OR_MODELS, DEFAULT_OR_MODEL, LS_OR_MODEL } from '../lib/openrouter';
+import { streamOpenRouter, getOrKey, fetchOrKey, OR_MODELS, DEFAULT_OR_MODEL, LS_OR_MODEL } from '../lib/openrouter';
 import { getPageInsight } from '../lib/page-context';
 
 function inlineRender(text) {
@@ -129,9 +129,12 @@ export default function AiPageInsight({ page }) {
   const showBar = () => { sessionStorage.removeItem(SS_HIDDEN); setBarHidden(false); };
 
   const run = useCallback(async () => {
-    const key = getOrKey();
+    let key = getOrKey();
     if (!key || key === 'your-key-here') {
-      setError('OpenRouter API key not set. Set VITE_OPENROUTER_API_KEY in .env.local.');
+      key = await fetchOrKey();
+    }
+    if (!key || key === 'your-key-here') {
+      setError('OpenRouter API key not set. Set VITE_OPENROUTER_API_KEY in env vars on Netlify.');
       setExpanded(true);
       return;
     }

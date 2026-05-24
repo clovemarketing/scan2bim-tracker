@@ -60,9 +60,12 @@ export function unloadWebLLM() {
 
 // ── Ollama (local server — http://localhost:11434) ────────────────────────────
 
+const isLocal = typeof window !== 'undefined' && /^localhost|127\.0\.0\.1|\[::1\]$/.test(window.location.hostname);
+
 export async function checkOllama(host = 'http://localhost:11434') {
   try {
-    const res = await fetch(`${host}/api/tags`, { signal: AbortSignal.timeout(2500) });
+    const url = isLocal ? `${host}/api/tags` : `/api/ollama/proxy/api/tags?host=${encodeURIComponent(host)}`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
     if (!res.ok) return null;
     const data = await res.json();
     return (data.models || []).map((m) => m.name);
@@ -93,7 +96,8 @@ export async function streamOllama(host, model, systemPrompt, userMessage, onTok
     ? { role: 'user', content: userMessage, images: images.map((d) => d.split(',')[1] || d) }
     : { role: 'user', content: userMessage };
 
-  const res = await fetch(`${host}/api/chat`, {
+  const url = isLocal ? `${host}/api/chat` : `/api/ollama/proxy/api/chat?host=${encodeURIComponent(host)}`;
+  const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
