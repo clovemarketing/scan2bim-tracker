@@ -64,7 +64,9 @@ const isLocal = typeof window !== 'undefined' && /^localhost|127\.0\.0\.1|\[::1\
 
 export async function checkOllama(host = 'http://localhost:11434') {
   try {
-    const url = isLocal ? `${host}/api/tags` : `/api/ollama/proxy/api/tags?host=${encodeURIComponent(host)}`;
+    const url = isLocal
+      ? `${host}/api/tags`
+      : `http://localhost:3001/api/ollama/proxy/api/tags?host=${encodeURIComponent(host)}`;
     const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
     if (!res.ok) return null;
     const data = await res.json();
@@ -96,7 +98,7 @@ export async function streamOllama(host, model, systemPrompt, userMessage, onTok
     ? { role: 'user', content: userMessage, images: images.map((d) => d.split(',')[1] || d) }
     : { role: 'user', content: userMessage };
 
-  const url = isLocal ? `${host}/api/chat` : `/api/ollama/proxy/api/chat?host=${encodeURIComponent(host)}`;
+  const url = isLocal ? `${host}/api/chat` : `http://localhost:3001/api/ollama/proxy/api/chat?host=${encodeURIComponent(host)}`;
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

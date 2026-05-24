@@ -2819,11 +2819,11 @@ function ollamaProxy(req, res) {
   };
 
   const proxyReq = http.request(options, (proxyRes) => {
-    let data = '';
-    proxyRes.on('data', (chunk) => { data += chunk; });
-    proxyRes.on('end', () => {
-      res.status(proxyRes.statusCode).type('application/json').send(data);
+    res.writeHead(proxyRes.statusCode, {
+      'Content-Type': proxyRes.headers['content-type'] || 'application/json',
+      'Transfer-Encoding': 'chunked',
     });
+    proxyRes.pipe(res);
   });
 
   proxyReq.on('error', () => {
