@@ -311,10 +311,9 @@ export default function AiChat({ page = 'dashboard' }) {
   // Auto-scroll
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
-  // Check Ollama on open (only on localhost — CORS blocked on deployed)
   useEffect(() => {
     if (open && backend === 'ollama' && olModels === null) {
-      if (isLocal) { probeOllama(); } else { setOlModels([]); }
+      probeOllama();
     }
   }, [open, backend]);
 
@@ -494,9 +493,9 @@ export default function AiChat({ page = 'dashboard' }) {
             <span className="font-semibold text-sm flex-1">AI Assistant</span>
             <div className="flex gap-1 bg-indigo-700 rounded-lg p-0.5">
               <button
-                onClick={() => { setBackend('ollama'); if (olModels === null && isLocal) probeOllama(); else if (olModels === null) setOlModels([]); }}
+                onClick={() => { setBackend('ollama'); if (olModels === null) probeOllama(); }}
                 className={`flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium transition-all ${backend === 'ollama' ? 'bg-white text-indigo-700' : 'text-indigo-200 hover:text-white'}`}
-                title="Ollama (local server)"
+                title="Ollama"
               >
                 <Server size={11} /> Ollama
               </button>
@@ -520,8 +519,13 @@ export default function AiChat({ page = 'dashboard' }) {
               ) : olModels.length === 0 ? (
                 <>
                   <span className="w-2 h-2 rounded-full bg-red-400 shrink-0" />
-                  <span className="text-red-600">{isLocal ? 'Ollama not reachable' : 'Ollama only on localhost'}</span>
-                  {isLocal && <button onClick={probeOllama} className="ml-auto text-slate-500 hover:text-slate-700"><RefreshCw size={11} /></button>}
+                  <span className="text-red-600">Ollama not reachable</span>
+                  <div className="ml-auto flex items-center gap-1.5">
+                    <button onClick={probeOllama} className="text-slate-500 hover:text-slate-700" title="Retry"><RefreshCw size={12} /></button>
+                    <button onClick={() => setShowOlCfg((v) => !v)} className="text-slate-400 hover:text-slate-600" title="Settings">
+                      <Settings size={12} />
+                    </button>
+                  </div>
                 </>
               ) : (
                 <>

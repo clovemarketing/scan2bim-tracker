@@ -3,6 +3,7 @@ import Sidebar from './components/Sidebar';
 import { Toast } from './components/Toast';
 import { api, setToken, getToken } from './lib/api';
 import LoadingScreen from './components/LoadingScreen';
+import ErrorBoundary from './components/ErrorBoundary';
 import AiChat from './components/AiChat';
 import AiPageInsight from './components/AiPageInsight';
 
@@ -19,6 +20,7 @@ const DivisionTargets = lazy(() => import('./pages/DivisionTargets'));
 const MonthEndSummary = lazy(() => import('./pages/MonthEndSummary'));
 const QAQCPage = lazy(() => import('./pages/QAQCPage'));
 const FeedbackPage = lazy(() => import('./pages/FeedbackPage'));
+const ReportsPage = lazy(() => import('./pages/ReportsPage'));
 const Login = lazy(() => import('./pages/Login'));
 
 let toastId = 1;
@@ -30,7 +32,7 @@ const ROLE_PAGES = {
 };
 
 export default function App() {
-  const [page, setPage] = useState('dashboard');
+  const [page, setPage] = useState(() => { try { return localStorage.getItem('s2b_page') || 'dashboard'; } catch { return 'dashboard'; } });
   const [toasts, setToasts] = useState([]);
   const [user, setUser] = useState(null);
   const [authChecked, setAuthChecked] = useState(false);
@@ -47,8 +49,7 @@ export default function App() {
     api.verify()
       .then((u) => setUser(u))
       .catch(() => { setToken(null); })
-      .finally(() => setAuthChecked(false));
-    setAuthChecked(true);
+      .finally(() => setAuthChecked(true));
   }, []);
 
   // Role-based allowed page keys (null = all allowed)
@@ -61,12 +62,16 @@ export default function App() {
     }
   }, [user?.role, page]);
 
+  // Persist current page across refreshes
+  useEffect(() => { try { localStorage.setItem('s2b_page', page); } catch {} }, [page]);
+
   const handleLogin = (userData) => setUser(userData);
 
   const handleLogout = async () => {
     try { await api.logout(); } catch { /* ignore */ }
     setToken(null);
     setUser(null);
+    try { localStorage.removeItem('s2b_page'); } catch {}
   };
 
   if (!authChecked && !user && getToken()) {
@@ -92,6 +97,7 @@ export default function App() {
     'project-progress': <ProjectProgress toast={toast} navigate={setPage} />,
     'qaqc': <QAQCPage toast={toast} />,
     'feedbacks': <FeedbackPage toast={toast} />,
+    'reports': <ReportsPage toast={toast} />,
     'division-targets': <DivisionTargets toast={toast} currentUser={user} />,
     'month-end-summary': <MonthEndSummary toast={toast} />,
     'shift-roster': <ShiftRoster toast={toast} />,
@@ -113,9 +119,11 @@ export default function App() {
       />
       <main className="flex-1 overflow-y-auto overflow-x-hidden">
         <AiPageInsight page={activePage} />
-        <Suspense fallback={<LoadingScreen message="Loading page" words={['data', 'view', 'page']} />}>
-          {pages[activePage] || pages[allowedKeys?.[0]] || pages.dashboard}
-        </Suspense>
+        <ErrorBoundary key={activePage}>
+          <Suspense fallback={<LoadingScreen message="Loading page" words={['data', 'view', 'page']} />}>
+            {pages[activePage] || pages[allowedKeys?.[0]] || pages.dashboard}
+          </Suspense>
+        </ErrorBoundary>
       </main>
       <Toast toasts={toasts} dismiss={dismiss} />
       <AiChat page={activePage} />

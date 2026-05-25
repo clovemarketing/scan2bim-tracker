@@ -1,7 +1,7 @@
-const BASE = (import.meta.env.VITE_API_URL || '') + '/api';
+export const BASE = (import.meta.env.VITE_API_URL || '') + '/api';
 
-export function getToken() { return localStorage.getItem('s2b_token') || ''; }
-export function setToken(t) { t ? localStorage.setItem('s2b_token', t) : localStorage.removeItem('s2b_token'); }
+export function getToken() { try { return localStorage.getItem('s2b_token') || ''; } catch { return ''; } }
+export function setToken(t) { try { t ? localStorage.setItem('s2b_token', t) : localStorage.removeItem('s2b_token'); } catch {} }
 
 // ── In-memory GET cache (30-second TTL) + in-flight deduplication ─────────────
 const _cache = {};    // url → { data, ts }
@@ -253,6 +253,9 @@ export const api = {
     return r;
   },
 
+  // Reports
+  downloadReportUrl: (type) => `${BASE}/reports/download/${type}`,
+
   // Data management
   migrate: () => req('/migrate', { method: 'POST' }),
   clearSheet: async (sheet) => {
@@ -270,5 +273,9 @@ export const api = {
     const r = await req('/sync-from-excel', { method: 'POST' });
     clearApiCache();
     return r;
+  },
+  downloadReportUrl: (type, params) => {
+    const qs = params ? '?' + new URLSearchParams(params).toString() : '';
+    return `${BASE}/reports/download/${type}${qs}`;
   },
 };

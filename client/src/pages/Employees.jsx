@@ -515,6 +515,42 @@ export default function Employees({ toast }) {
     rows.filter((r) => r[0] && r[1]),
     [rows]);
 
+  const formWarnings = useMemo(() => {
+    const warnings = {};
+
+    // Phone (i=9) — format check
+    const phone = (form[9] || '').trim();
+    if (phone) {
+      const digitsOnly = phone.replace(/[^\d]/g, '');
+      if (digitsOnly.length < 7) {
+        warnings.phone = `Phone seems too short (${digitsOnly.length} digits). Expected at least 7.`;
+      } else if (digitsOnly.length > 15) {
+        warnings.phone = `Phone seems too long (${digitsOnly.length} digits). Expected at most 15.`;
+      } else if (!/^[\d\s\-+().]+$/.test(phone)) {
+        warnings.phone = 'Phone contains invalid characters. Use digits, spaces, dashes, parentheses, or +.';
+      }
+    }
+
+    return warnings;
+  }, [form]);
+
+  const duplicateEmpIdWarning = useMemo(() => {
+    const entered = (form[0] || '').trim();
+    if (!entered) return null;
+    const dup = rows.find((r, i) => {
+      if (modal?.mode === 'edit') {
+        const sheetRow = rowIndices[i];
+        if (sheetRow === modal.sheetRow) return false;
+      }
+      return (r[0] || '').trim().toLowerCase() === entered.toLowerCase();
+    });
+    if (!dup) return null;
+    return {
+      message: `Duplicate EMP ID — "${entered}" already exists for "${dup[1] || dup[0]}"`,
+      existingName: dup[1] || dup[0],
+    };
+  }, [form, rows, rowIndices, modal]);
+
   const blank = () => { const f = Array(19).fill(''); f[6] = 'Active'; f[7] = '75'; f[8] = '08:00'; return f; };
 
   // Experience ↔ Join Date helpers
@@ -562,6 +598,21 @@ export default function Employees({ toast }) {
 
   const save = async () => {
     if (!form[0] || !form[1]) return toast.error('EMP ID and Full Name are required');
+
+    const empId = form[0];
+
+    // ── Duplicate EMP ID check ──
+    const duplicate = rows.find((r, i) => {
+      if (modal.mode === 'edit') {
+        const sheetRow = rowIndices[i];
+        if (sheetRow === modal.sheetRow) return false;
+      }
+      return (r[0] || '').trim().toLowerCase() === empId.trim().toLowerCase();
+    });
+    if (duplicate) {
+      return toast.error(`Duplicate EMP ID: "${empId}" already exists for "${duplicate[1] || duplicate[0]}". Please use a unique ID.`);
+    }
+
     setSaving(true);
     try {
       if (modal.mode === 'add') { await api.addEmployee(form); toast.success('Employee added'); }
@@ -776,7 +827,16 @@ export default function Employees({ toast }) {
       {modal && (
         <Modal title={modal.mode === 'add' ? 'Add Employee' : 'Edit Employee'} onClose={() => setModal(null)} wide>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            <Field form={form} set={set} label="EMP ID" i={0} />
+            <div>
+              <label className="label">EMP ID</label>
+              <input className={`input ${duplicateEmpIdWarning ? 'border-red-300 focus:border-red-500 focus:ring-red-200' : ''}`}
+                value={form[0] ?? ''} onChange={(e) => set(0, e.target.value)} />
+              {duplicateEmpIdWarning && (
+                <p className="mt-1 text-[11px] text-red-500 flex items-center gap-1">
+                  <span>⚠️</span> {duplicateEmpIdWarning.message}
+                </p>
+              )}
+            </div>
             <Field form={form} set={set} label="Full Name" i={1} />
             <Field form={form} set={set} label="Short Name" i={2} />
 
@@ -811,7 +871,16 @@ export default function Employees({ toast }) {
                   if (expYears !== '' && expMonths !== '') updateReqEff(expYears, expMonths);
                 }} />
             </div>
-            <Field form={form} set={set} label="Phone" i={9} />
+            <div>
+              <label className="label">Phone</label>
+              <input className={`input ${formWarnings.phone ? 'border-red-300 focus:border-red-500 focus:ring-red-200' : ''}`}
+                value={form[9] ?? ''} onChange={(e) => set(9, e.target.value)} />
+              {formWarnings.phone && (
+                <p className="mt-1 text-[11px] text-red-500 flex items-center gap-1">
+                  <span>⚠️</span> {formWarnings.phone}
+                </p>
+              )}
+            </div>
             <Field form={form} set={set} label="Email" i={10} type="email" />
             <div>
               <label className="label">Join Date</label>

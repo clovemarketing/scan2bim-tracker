@@ -247,6 +247,7 @@ export default function FeedbackPage({ toast }) {
         empAvgEff,
         sessions: entries.length,
         empCount: team.length,
+        remarks: r[11] || '',
       };
      }).sort((a, b) => b.spent - a.spent);
   }, [filtered, logEntries, tmMap, derivedSuffix, activeTab]);
@@ -362,19 +363,22 @@ export default function FeedbackPage({ toast }) {
 
   const hasData = allLogEntries.length > 0;
   const tabColor = activeTab === 'client' ? 'violet' : 'sky';
+  const ts = tabColor === 'violet'
+    ? { text500: 'text-violet-500', text600: 'text-violet-600', bg50: 'bg-violet-50', bg50_50: 'bg-violet-50/50', border400: 'border-violet-400', hoverBg50_30: 'hover:bg-violet-50/30' }
+    : { text500: 'text-sky-500',    text600: 'text-sky-600',    bg50: 'bg-sky-50',    bg50_50: 'bg-sky-50/50',    border400: 'border-sky-400',    hoverBg50_30: 'hover:bg-sky-50/30' };
 
   return (
     <div className="page">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
         <div>
           <h1 className="page-title flex items-center gap-2 text-lg sm:text-2xl">
-            <MessageSquare size={18} className={`sm:size-[20px] text-${tabColor}-500 shrink-0`} />
+            <MessageSquare size={18} className={`sm:size-[20px] ${ts.text500} shrink-0`} />
             Feedback Analytics
           </h1>
           <p className="page-sub text-xs sm:text-sm">{filtered.length} project{filtered.length !== 1 ? 's' : ''} · {stats.sessions} session{stats.sessions !== 1 ? 's' : ''} logged</p>
         </div>
         <div className="flex items-center gap-1.5 sm:gap-2 self-start sm:self-auto flex-wrap">
-          <button onClick={() => setShowFilters(!showFilters)} className={`btn-secondary gap-1 px-2 sm:px-3 text-[11px] sm:text-xs ${showFilters ? `border-${tabColor}-400 bg-${tabColor}-50` : ''}`}>
+          <button onClick={() => setShowFilters(!showFilters)} className={`btn-secondary gap-1 px-2 sm:px-3 text-[11px] sm:text-xs ${showFilters ? `${ts.border400} ${ts.bg50}` : ''}`}>
             <Filter size={12} className="sm:size-[13px]" /> <span className="hidden sm:inline">Filters</span><span className="sm:hidden">Filter</span>
           </button>
           <button onClick={load} className="btn-secondary px-2 sm:px-3"><RefreshCw size={13} className="sm:size-[14px]" /></button>
@@ -401,7 +405,7 @@ export default function FeedbackPage({ toast }) {
       </div>
 
       {/* View mode tabs */}
-      <div className={`flex gap-1 bg-${tabColor}-50/50 p-0.5 rounded-xl mb-5 flex-wrap w-full sm:w-fit`}>
+      <div className={`flex gap-1 ${ts.bg50_50} p-0.5 rounded-xl mb-5 flex-wrap w-full sm:w-fit`}>
         <button
           onClick={() => setViewMode('project')}
           className={`flex items-center gap-1.5 px-2.5 sm:px-4 py-1.5 rounded-lg text-xs sm:text-sm font-medium transition-all ${viewMode === 'project' ? 'bg-white shadow text-slate-700' : 'text-slate-500 hover:text-slate-700'}`}
@@ -522,8 +526,8 @@ export default function FeedbackPage({ toast }) {
         </div>
       ) : (
         <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-7 gap-4 mb-6">
-          <StatCard icon={Briefcase} bg={`bg-${tabColor}-50`} color={`text-${tabColor}-600`} label="Projects" value={stats.totalProjects} sub="with feedback flag" />
-          <StatCard icon={Clock} bg={`bg-${tabColor}-50`} color={`text-${tabColor}-600`} label="FB Hrs Allocated" value={hasData ? toHhmm(stats.totalFBHrs * 60) : '—'} sub={activeTab === 'client' ? 'Client FB Hrs' : 'Internal FB Hrs'} />
+          <StatCard icon={Briefcase} bg={ts.bg50} color={ts.text600} label="Projects" value={stats.totalProjects} sub="with feedback flag" />
+          <StatCard icon={Clock} bg={ts.bg50} color={ts.text600} label="FB Hrs Allocated" value={hasData ? toHhmm(stats.totalFBHrs * 60) : '—'} sub={activeTab === 'client' ? 'Client FB Hrs' : 'Internal FB Hrs'} />
           <StatCard icon={Clock} bg="bg-blue-50" color="text-blue-600" label="Spent Hrs" value={hasData ? toHhmm(stats.totalSpent) : '—'} sub="actual logged" />
           <StatCard icon={TrendingUp} bg="bg-violet-50" color="text-violet-600" label="Req Eff Hrs" value={hasData ? toHhmm(stats.totalReqEff) : '—'} />
           <StatCard icon={BarChart2} bg="bg-emerald-50" color="text-emerald-600" label="Act Eff Hrs" value={hasData ? toHhmm(stats.totalActEff) : '—'} />
@@ -552,6 +556,7 @@ export default function FeedbackPage({ toast }) {
                <thead className="bg-slate-50 border-b border-slate-200">
                  <tr>
                    <th className="px-2 sm:px-3 py-2 text-left text-[10px] sm:text-xs font-semibold text-slate-500">Project</th>
+                   <th className="px-2 sm:px-3 py-2 text-left text-[10px] sm:text-xs font-semibold text-slate-500 hidden lg:table-cell">Remarks</th>
                    <th className="px-2 sm:px-3 py-2 text-left text-[10px] sm:text-xs font-semibold text-slate-500 hidden md:table-cell">Client</th>
                    <th className="px-2 sm:px-3 py-2 text-left text-[10px] sm:text-xs font-semibold text-slate-500">Status</th>
                    <th className="px-2 sm:px-3 py-2 text-left text-[10px] sm:text-xs font-semibold text-slate-500 hidden md:table-cell">Lead</th>
@@ -570,11 +575,12 @@ export default function FeedbackPage({ toast }) {
                </thead>
               <tbody>
                 {projAnalytics.map((p, i) => (
-                  <tr key={i} className={`border-b border-slate-100 ${i % 2 === 0 ? 'bg-white' : 'bg-slate-50/40'} hover:bg-${tabColor}-50/30`}>
+                  <tr key={i} className={`border-b border-slate-100 ${i % 2 === 0 ? 'bg-white' : 'bg-slate-50/40'} ${ts.hoverBg50_30}`}>
                     <td className="px-2 sm:px-3 py-2">
                       <p className="font-medium text-slate-800 truncate max-w-[120px] sm:max-w-[160px] md:max-w-[180px]" title={p.projName}>{p.projName}</p>
                       <p className="text-slate-400 font-normal text-[10px] sm:text-xs">{p.projId}</p>
                     </td>
+                    <td className="px-2 sm:px-3 py-2 text-[11px] sm:text-sm text-slate-500 truncate max-w-[100px] hidden lg:table-cell" title={p.remarks}>{p.remarks || '—'}</td>
                     <td className="px-2 sm:px-3 py-2 text-[11px] sm:text-sm text-slate-600 hidden md:table-cell">{p.client}</td>
                     <td className="px-2 sm:px-3 py-2 text-[11px]"><Badge value={p.status} /></td>
                     <td className="px-2 sm:px-3 py-2 text-[11px] sm:text-sm text-slate-600 hidden md:table-cell">{p.projectLead}</td>
@@ -598,7 +604,7 @@ export default function FeedbackPage({ toast }) {
               </tbody>
                 <tfoot className="bg-slate-50 border-t border-slate-200 font-semibold">
                   <tr>
-                    <td className="px-2 sm:px-3 py-2 text-[10px] sm:text-xs" colSpan={5}>Total ({projAnalytics.length})</td>
+                    <td className="px-2 sm:px-3 py-2 text-[10px] sm:text-xs" colSpan={6}>Total ({projAnalytics.length})</td>
                     <td className="px-2 sm:px-3 py-2 text-center text-[10px] sm:text-sm text-slate-700">{projAnalytics.reduce((s, p) => s + p.sessions, 0)}</td>
                     <td className="px-2 sm:px-3 py-2 text-right font-mono text-[10px] sm:text-sm text-blue-600 hidden lg:table-cell">{toHhmm(projAnalytics.reduce((s, p) => s + p.clientHrs, 0) * 60)}</td>
                     <td className="px-2 sm:px-3 py-2 text-right font-mono text-[10px] sm:text-sm text-amber-700">{toHhmm(projAnalytics.reduce((s, p) => s + p.fbHrs, 0) * 60)}</td>
@@ -690,7 +696,7 @@ export default function FeedbackPage({ toast }) {
               </thead>
               <tbody>
                 {empAnalytics.map((e, i) => (
-                  <tr key={i} className={`border-b border-slate-100 ${i % 2 === 0 ? 'bg-white' : 'bg-slate-50/40'} hover:bg-${tabColor}-50/30`}>
+                  <tr key={i} className={`border-b border-slate-100 ${i % 2 === 0 ? 'bg-white' : 'bg-slate-50/40'} ${ts.hoverBg50_30}`}>
                     <td className="px-2 sm:px-3 py-2 font-medium text-slate-800 text-[11px] sm:text-sm">{e.empName}</td>
                     <td className="px-2 sm:px-3 py-2 text-slate-400 text-[10px] sm:text-xs hidden sm:table-cell">{e.empId}</td>
                     <td className="px-2 sm:px-3 py-2 text-center text-[11px] sm:text-sm text-slate-500">{e.projCount}</td>
@@ -772,7 +778,7 @@ export default function FeedbackPage({ toast }) {
               </thead>
               <tbody>
                 {leadAnalytics.map((l, i) => (
-                  <tr key={i} className={`border-b border-slate-100 ${i % 2 === 0 ? 'bg-white' : 'bg-slate-50/40'} hover:bg-${tabColor}-50/30`}>
+                  <tr key={i} className={`border-b border-slate-100 ${i % 2 === 0 ? 'bg-white' : 'bg-slate-50/40'} ${ts.hoverBg50_30}`}>
                     <td className="px-2 sm:px-3 py-2 font-medium text-slate-800 text-[11px] sm:text-sm">{l.leadName}</td>
                     <td className="px-2 sm:px-3 py-2 text-center text-[11px] sm:text-sm text-slate-500">{l.empCount}</td>
                     <td className="px-2 sm:px-3 py-2 text-center text-[11px] sm:text-sm text-slate-500">{l.projCount}</td>

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { LayoutDashboard, Users, FolderKanban, CalendarCheck, Clock, Database, Settings, ChevronRight, CalendarRange, RefreshCw, BarChart2, Target, LogOut, ChevronLeft, ShieldCheck, MessageSquare } from 'lucide-react';
+import { LayoutDashboard, Users, FolderKanban, CalendarCheck, Clock, Database, Settings, ChevronRight, CalendarRange, RefreshCw, BarChart2, Target, LogOut, ChevronLeft, ShieldCheck, MessageSquare, TrendingUp, FileText } from 'lucide-react';
 
 const NAV = [
   { key: 'dashboard',        label: 'Dashboard',        icon: LayoutDashboard },
@@ -8,10 +8,11 @@ const NAV = [
   { key: 'attendance',       label: 'Attendance',       icon: CalendarCheck },
   { key: 'project-hours',    label: 'Project Hours',    icon: Clock },
   { key: 'project-hours-analytics', label: 'Analytics', icon: BarChart2 },
-  { key: 'project-progress', label: 'Project Progress', icon: BarChart2 },
+  { key: 'project-progress', label: 'Project Progress', icon: TrendingUp },
   { key: 'qaqc',             label: 'QA/QC Team',       icon: ShieldCheck },
   { key: 'feedbacks',        label: 'Feedbacks',        icon: MessageSquare },
   { key: 'division-targets', label: 'Division Targets', icon: Target },
+  { key: 'reports',          label: 'Reports',          icon: FileText },
   { key: 'month-end-summary',label: 'Month End Summary',icon: BarChart2 },
   { key: 'shift-roster',     label: 'Shift Roster',     icon: CalendarRange },
   { key: 'data',             label: 'Data Management',  icon: Database },

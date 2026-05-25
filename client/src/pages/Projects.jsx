@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo, useCallback } from 'react';
-import { Plus, Pencil, RefreshCw, Briefcase, Clock, TrendingUp, CheckCircle2, Upload, Search, UserCheck, UserX, ChevronDown, ChevronRight, X, Save, Edit3 } from 'lucide-react';
+import { Plus, Pencil, Trash2, RefreshCw, Briefcase, Clock, TrendingUp, CheckCircle2, Upload, Search, UserCheck, UserX, ChevronDown, ChevronRight, X, Save, Edit3 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { api } from '../lib/api';
 import DataTable from '../components/DataTable';
@@ -319,6 +319,43 @@ export default function Projects({ toast }) {
   const [fbClientSearch, setFbClientSearch] = useState('');
   const [viewMode, setViewMode] = useState('hrs');
 
+  const duplicateIdWarning = useMemo(() => {
+    const entered = (form[0] || '').trim();
+    if (!entered) return null;
+    const dup = rows.find((r, i) => {
+      if (modal?.mode === 'edit') {
+        const sheetRow = rowIndices[i];
+        if (sheetRow === modal.sheetRow) return false;
+      }
+      return (r[0] || '').trim().toLowerCase() === entered.toLowerCase();
+    });
+    if (!dup) return null;
+    return {
+      message: `Duplicate Proj ID — "${entered}" already exists for "${dup[1] || dup[0]}"`,
+      existingProject: dup[1] || dup[0],
+    };
+  }, [form, rows, rowIndices, modal]);
+
+  const getNextProjId = useCallback(() => {
+    if (!rows.length) return 'PRJ001';
+    let maxNum = 0;
+    let prefix = 'PRJ';
+    let digits = 3;
+    rows.forEach((r) => {
+      const id = (r[0] || '').trim();
+      if (!id) return;
+      const match = id.match(/^([A-Za-z-]*?)(\d+)$/);
+      if (match) {
+        const p = match[1] || '';
+        const num = parseInt(match[2], 10);
+        if (p) prefix = p;
+        if (num > maxNum) { maxNum = num; digits = match[2].length; }
+      }
+    });
+    const nextNum = maxNum + 1;
+    return `${prefix}${String(nextNum).padStart(digits, '0')}`;
+  }, [rows]);
+
   // ── Import state ──
   const [importOpen, setImportOpen] = useState(false);
   const [importStep, setImportStep] = useState('upload');
@@ -521,7 +558,34 @@ export default function Projects({ toast }) {
   }, [filtered]);
 
   // ── Projects actions ──
-  const openAdd = () => { setForm(Array(21).fill('')); setSelectedMembers(new Set()); setMemberSearch(''); setQcMembers(new Set()); setFbIntMembers(new Set()); setFbClientMembers(new Set()); setQcSearch(''); setFbIntSearch(''); setFbClientSearch(''); setModal({ mode: 'add' }); };
+  const confirmDelete = async (row, sheetRow) => {
+    const name = row[1] || row[0];
+    if (!confirm(`Delete project "${name}" (${row[0]})? This cannot be undone.`)) return;
+    try {
+      await api.bulkClearRows('PROJECTS', [sheetRow]);
+      const projId = row[0];
+      const derivedIds = [projId];
+      if (row[20] === 'Yes') derivedIds.push(`${projId}-QC`);
+      if (row[15] === 'Yes') derivedIds.push(`${projId}-FB-Int`);
+      if (row[18] === 'Yes') derivedIds.push(`${projId}-FB-Client`);
+      const mapRowsToClear = empMapRows
+        .map((m, i) => derivedIds.includes(m[4]) ? empMapIndices[i] : null)
+        .filter(Boolean);
+      if (mapRowsToClear.length) {
+        await api.bulkClearRows('EMP_MAP', mapRowsToClear);
+      }
+      toast.success(`Project "${name}" deleted`);
+      load();
+    } catch (e) { toast.error(e.message); }
+  };
+
+  const openAdd = () => {
+    const nextId = getNextProjId();
+    const f = Array(21).fill('');
+    f[0] = nextId;
+    setForm(f);
+    setSelectedMembers(new Set()); setMemberSearch(''); setQcMembers(new Set()); setFbIntMembers(new Set()); setFbClientMembers(new Set()); setQcSearch(''); setFbIntSearch(''); setFbClientSearch(''); setModal({ mode: 'add' });
+  };
   const openEdit = (_displayRow, sheetRow) => {
     const idx = rowIndices.indexOf(sheetRow);
     const originalRow = idx >= 0 ? rows[idx] : _displayRow;
@@ -572,10 +636,24 @@ export default function Projects({ toast }) {
 
   const save = async () => {
     if (!form[0] || !form[1]) return toast.error('Proj ID and Project Name are required');
+
+    const projId = form[0];
+    const projName = form[1];
+
+    // ── Duplicate Proj ID check ──
+    const duplicate = rows.find((r, i) => {
+      if (modal.mode === 'edit') {
+        const sheetRow = rowIndices[i];
+        if (sheetRow === modal.sheetRow) return false; // skip self
+      }
+      return (r[0] || '').trim().toLowerCase() === projId.trim().toLowerCase();
+    });
+    if (duplicate) {
+      return toast.error(`Duplicate Proj ID: "${projId}" already exists for project "${duplicate[1] || duplicate[0]}". Please use a unique ID.`);
+    }
+
     setSaving(true);
     try {
-      const projId = form[0];
-      const projName = form[1];
 
       // ── Add mode ──
       if (modal.mode === 'add') {
@@ -616,7 +694,7 @@ export default function Projects({ toast }) {
         toast.success('Project added');
 
       // ── Edit mode ──
-      } else {
+      } else if (modal.mode === 'edit') {
         await api.updateProject(modal.sheetRow, form);
 
         // Build a lookup of existing EMP_MAP entries grouped by projId
@@ -1107,9 +1185,14 @@ export default function Projects({ toast }) {
                 actions={{
                   renderCell,
                   renderRow: (row, sheetRow) => (
-                    <button onClick={() => openEdit(row, sheetRow)} className="btn-secondary py-1 px-2 text-xs gap-1">
-                      <Pencil size={11} /> Edit
-                    </button>
+                    <div className="flex gap-1">
+                      <button onClick={() => openEdit(row, sheetRow)} className="btn-secondary py-1 px-2 text-xs gap-1">
+                        <Pencil size={11} /> Edit
+                      </button>
+                      <button onClick={() => confirmDelete(row, sheetRow)} className="btn-secondary py-1 px-2 text-xs gap-1 text-red-600 border-red-200 hover:bg-red-50">
+                        <Trash2 size={11} />
+                      </button>
+                    </div>
                   ),
                 }}
                 mobileCard={(row, origIdx, isSelected, sheetRow) => (
@@ -1131,9 +1214,12 @@ export default function Projects({ toast }) {
                         <span className="text-slate-400">Rem: {renderCell(12, row[12], row)}</span>
                         <span className="text-slate-400">Eff: {renderCell(13, row[13], row)}</span>
                       </div>
-                      <div>
+                      <div className="flex gap-1">
                         <button onClick={() => openEdit(row, sheetRow)} className="btn-secondary py-1 px-2 text-xs gap-1">
                           <Pencil size={11} /> Edit
+                        </button>
+                        <button onClick={() => confirmDelete(row, sheetRow)} className="btn-secondary py-1 px-1.5 text-xs text-red-600 border-red-200 hover:bg-red-50">
+                          <Trash2 size={10} />
                         </button>
                       </div>
                     </div>
@@ -1256,7 +1342,16 @@ export default function Projects({ toast }) {
         <Modal title={modal.mode === 'add' ? 'Add Project' : 'Edit Project'} onClose={() => setModal(null)} wide>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
             {[['Proj ID', 0], ['Project Name', 1], ['Client', 2]].map(([l, i]) => (
-              <div key={i}><label className="label">{l}</label><input className="input" value={form[i] ?? ''} onChange={(e) => set(i, e.target.value)} /></div>
+              <div key={i}>
+                <label className="label">{l}</label>
+                <input className={`input ${i === 0 && duplicateIdWarning ? 'border-red-300 focus:border-red-500 focus:ring-red-200' : ''}`}
+                  value={form[i] ?? ''} onChange={(e) => set(i, e.target.value)} />
+                {i === 0 && duplicateIdWarning && (
+                  <p className="mt-1 text-[11px] text-red-500 flex items-center gap-1">
+                    <span>⚠️</span> {duplicateIdWarning.message}
+                  </p>
+                )}
+              </div>
             ))}
             <div>
               <label className="label">Status</label>

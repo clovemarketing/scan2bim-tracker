@@ -305,7 +305,8 @@
    Greeting Weather Card
    ============================================ */
 .greeting-card {
-  width: 280px;
+  width: 100%;
+  min-width: 0;
   height: 125px;
   position: relative;
   padding: 18px 22px;
@@ -475,6 +476,7 @@
   border-radius: 50%;
   background: radial-gradient(circle at 35% 35%, #f5f3ce, #e8e4b0);
   box-shadow: 0 0 30px rgba(245, 243, 206, 0.4);
+  overflow: hidden;
 }
 
 .weather-moon::after {
@@ -516,14 +518,14 @@
 }
 
 .weather-cloud.front {
-  right: 35px;
+  right: 96px;
   top: 20px;
   z-index: 11;
   animation: drift 8s infinite ease-in-out;
 }
 
 .weather-cloud.back {
-  right: -5px;
+  right: 61px;
   top: -12px;
   z-index: 9;
   animation: drift 12s infinite ease-in-out;
@@ -648,6 +650,16 @@
   background: #4a5a6a;
 }
 
+.cloud-drizzle {
+  background: #9ab8c8;
+  box-shadow: 0 4px 15px rgba(154, 184, 200, 0.25);
+}
+.cloud-drizzle::before,
+.cloud-drizzle::after,
+.cloud-drizzle .cloud-bump {
+  background: #9ab8c8;
+}
+
 @keyframes drift {
   0% { transform: translateX(6px); }
   50% { transform: translateX(-6px); }
@@ -681,6 +693,45 @@
   10% { opacity: 0.6; }
   90% { opacity: 0.6; }
   100% { top: 110%; height: 15px; opacity: 0; }
+}
+
+/* ── Drizzle — fine, misty precipitation ── */
+.drizzle-container {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+.drizzle-drop {
+  position: absolute;
+  width: 1px;
+  height: 6px;
+  background: linear-gradient(to bottom, transparent, rgba(174, 194, 224, 0.35));
+  border-radius: 1px;
+  animation: drizzle-fall 2.5s linear infinite;
+}
+
+@keyframes drizzle-fall {
+  0% { top: -5%; opacity: 0; }
+  15% { opacity: 0.4; }
+  85% { opacity: 0.4; }
+  100% { top: 110%; opacity: 0; }
+}
+
+.drizzle-mist {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 35px;
+  background: linear-gradient(to top, rgba(200, 215, 225, 0.25) 0%, transparent 100%);
+  pointer-events: none;
+  animation: mist-pulse 4s ease-in-out infinite alternate;
+}
+
+@keyframes mist-pulse {
+  0% { opacity: 0.4; }
+  100% { opacity: 0.8; }
 }
 
 /* ── Lightning ── */

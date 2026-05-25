@@ -505,6 +505,7 @@ app.post('/api/users', requireAuth, async (req, res) => {
 app.put('/api/users/:row', requireAuth, async (req, res) => {
   try {
     const rowNum = parseInt(req.params.row);
+    if (isNaN(rowNum)) return res.status(400).json({ error: 'Invalid row number' });
     const existing = await getValues(SHEETS.USERS, `A${rowNum}:H${rowNum}`);
     if (!existing.length) return res.status(404).json({ error: 'User not found' });
     const r = [...existing[0]]; while (r.length < 8) r.push('');
@@ -519,11 +520,13 @@ app.put('/api/users/:row', requireAuth, async (req, res) => {
 
 app.put('/api/users/:row/password', requireAuth, async (req, res) => {
   try {
+    const rowNum = parseInt(req.params.row);
+    if (isNaN(rowNum)) return res.status(400).json({ error: 'Invalid row number' });
     const { password } = req.body;
     if (!password) return res.status(400).json({ error: 'Password required' });
     const salt = generateSalt();
     const hash = hashPassword(password, salt);
-    await setValues(SHEETS.USERS, `C${req.params.row}:D${req.params.row}`, [[hash, salt]]);
+    await setValues(SHEETS.USERS, `C${rowNum}:D${rowNum}`, [[hash, salt]]);
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -557,8 +560,12 @@ app.get('/api/employees', async (req, res) => {
     const [, ...data] = rows;
     const result = { headers: EMP_HEADERS, data: [], rowIndices: [] };
     data.forEach((r, i) => {
-      if (!r[0]) return;
+      if (!r[0] && !r[1]) return;
       while (r.length < 19) r.push('');
+      const rawId = (r[0] || '').trim();
+      if (!rawId || rawId.toLowerCase() === 'trainee') {
+        r[0] = `T${String(i + 1).padStart(3, '0')}`;
+      }
       result.data.push(r);
       result.rowIndices.push(i + 2);
     });
@@ -568,8 +575,23 @@ app.get('/api/employees', async (req, res) => {
 
 app.get('/api/employees/active', async (req, res) => {
   try {
-    const rows = await getValues(SHEETS.EMPLOYEES, 'A2:S300');
-    const active = rows.filter((r) => r[0] && r[6] === 'Active').map((r) => { while (r.length < 19) r.push(''); return r; });
+    const rows = await getValues(SHEETS.EMPLOYEES, 'A1:S300');
+    if (!rows.length) return res.json([]);
+    const [, ...data] = rows;
+    const active = [];
+    data.forEach((r, i) => {
+      const name = (r[1] || '').trim();
+      const status = (r[6] || '').trim();
+      if ((r[0] || name) && status === 'Active') {
+        const row = [...r];
+        while (row.length < 19) row.push('');
+        const rawId = (row[0] || '').trim();
+        if (!rawId || rawId.toLowerCase() === 'trainee') {
+          row[0] = `T${String(i + 1).padStart(3, '0')}`;
+        }
+        active.push(row);
+      }
+    });
     res.json(active);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1062,6 +1084,7 @@ app.get('/api/projects/internal-feedback', async (req, res) => {
           reqEffHrs: +(h * (empRatioMap[eId] || 0.75)).toFixed(2),
           actEffHrs: parseFloat(ph[10]) || 0,
           teamLead: ph[13] || r[22] || r[4] || '',
+          remarks: ph[12] || '',
         });
       });
       const teamMembers = Object.values(tmAcc).map((t) => ({ ...t, hrs: +t.hrs.toFixed(2), empReqEff: +t.empReqEff.toFixed(2) })).sort((a, b) => b.hrs - a.hrs);
@@ -1127,6 +1150,7 @@ app.get('/api/projects/feedback', async (req, res) => {
           reqEffHrs: +(h * (empRatioMap[eId] || 0.75)).toFixed(2),
           actEffHrs: parseFloat(ph[10]) || 0,
           teamLead: ph[13] || r[23] || r[4] || '',
+          remarks: ph[12] || '',
         });
       });
       const teamMembers = Object.values(tmAcc).map((t) => ({ ...t, hrs: +t.hrs.toFixed(2), empReqEff: +t.empReqEff.toFixed(2) })).sort((a, b) => b.hrs - a.hrs);
@@ -1193,6 +1217,7 @@ app.post('/api/projects', async (req, res) => {
 app.put('/api/projects/:row', async (req, res) => {
   try {
     const rowNum = parseInt(req.params.row);
+    if (isNaN(rowNum)) return res.status(400).json({ error: 'Invalid row number' });
     // form sends 21 fields: [0-11 basic, 12-17 feedback/qaqc, 18-20 assigned persons]
     const data = [...req.body];
     while (data.length < 21) data.push('');
@@ -1413,7 +1438,11 @@ app.post('/api/emp-map/assign', async (req, res) => {
 });
 
 app.put('/api/emp-map/:row', async (req, res) => {
-  try { await setValues(SHEETS.EMP_MAP, `A${req.params.row}:K${req.params.row}`, [req.body]); res.json({ success: true }); }
+  try {
+    const rowNum = parseInt(req.params.row);
+    if (isNaN(rowNum)) return res.status(400).json({ error: 'Invalid row number' });
+    await setValues(SHEETS.EMP_MAP, `A${rowNum}:K${rowNum}`, [req.body]); res.json({ success: true });
+  }
   catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -1432,8 +1461,11 @@ app.get('/api/attendance/today', async (req, res) => {
       getValues(SHEETS.EMPLOYEES, 'A2:O300'),
     ]);
     const byEmp = {};
-    empRows.filter((r) => r[0] && r[6] === 'Active').forEach((r) => {
-      byEmp[r[0]] = { empId: r[0], empName: r[1], dept: r[4] || '', shift: r[13] || '', weekOff: r[14] || '', dayStatus: '', sessions: [], rowIndices: [] };
+    empRows.forEach((r, ei) => {
+      if (!r[0] && !r[1]) return;
+      const rawId = (r[0] || '').trim();
+      const empId = (rawId && rawId.toLowerCase() !== 'trainee') ? rawId : `T${String(ei + 1).padStart(3, '0')}`;
+      byEmp[empId] = { empId, empName: r[1] || '', dept: r[4] || '', shift: r[13] || '', weekOff: r[14] || '', dayStatus: '', sessions: [], rowIndices: [] };
     });
     attRows.forEach((r, idx) => {
       if (r[0] !== date || !r[1]) return;
@@ -1514,6 +1546,7 @@ app.post('/api/attendance/session', async (req, res) => {
 app.delete('/api/attendance/session/:row', async (req, res) => {
   try {
     const rowNum = parseInt(req.params.row);
+    if (isNaN(rowNum)) return res.status(400).json({ error: 'Invalid row number' });
     // Read attendance row to find linked PROJ_HOURS record
     const attData = await getValues(SHEETS.ATTENDANCE, `A${rowNum}:N${rowNum}`);
     const attRow = attData?.[0];
@@ -1540,6 +1573,7 @@ app.delete('/api/attendance/session/:row', async (req, res) => {
 app.put('/api/attendance/session/:row', async (req, res) => {
   try {
     const rowNum = parseInt(req.params.row);
+    if (isNaN(rowNum)) return res.status(400).json({ error: 'Invalid row number' });
     const { date, empId, empName, dept, projId, projName, hrsWorked: hrsBody, miscHrs, actEffHrs, remarks } = req.body;
     const hrsWorked = Math.round(parseFloat(hrsBody) * 100) / 100 || 0;
     const otHrs = miscHrs !== undefined ? (Math.round(parseFloat(miscHrs) * 100) / 100) || 0 : +(Math.max(0, hrsWorked - 9)).toFixed(2);
@@ -1732,6 +1766,7 @@ app.get('/api/att-store', async (req, res) => {
 app.put('/api/att-store/:row', requireAuth, async (req, res) => {
   try {
     const rowNum = parseInt(req.params.row);
+    if (isNaN(rowNum)) return res.status(400).json({ error: 'Invalid row number' });
     const { projId, projName, hrsWorked: hrsBody, miscHrs, actEffHrs, remarks } = req.body;
     const hrsWorked = Math.round(parseFloat(hrsBody) * 100) / 100 || 0;
     const otHrs = miscHrs !== undefined ? (Math.round(parseFloat(miscHrs) * 100) / 100) || 0 : +(Math.max(0, hrsWorked - 9)).toFixed(2);
@@ -1756,7 +1791,7 @@ app.put('/api/att-store/:row', requireAuth, async (req, res) => {
 app.get('/api/div-targets', async (req, res) => {
   try {
     const year = parseInt(req.query.year) || new Date().getFullYear();
-    const month = parseInt(req.query.month) ?? new Date().getMonth();
+    const month = parseInt(req.query.month) || new Date().getMonth();
     const rows = await getValues(SHEETS.DIV_TARGETS, 'A2:F2000');
     let divisionTarget = 0;
     const targets = {};
@@ -2193,7 +2228,7 @@ function workingDaysInMonth(year, month, holidayDates) {
 app.get('/api/month-end-summary', async (req, res) => {
   try {
     const year = parseInt(req.query.year) || new Date().getFullYear();
-    const month = parseInt(req.query.month) ?? new Date().getMonth();
+    const month = parseInt(req.query.month) || new Date().getMonth();
     const prefix = `${year}-${String(month + 1).padStart(2, '0')}`;
     const holidayRows = await getValues(SHEETS.HOLIDAYS, 'A2:D2000');
     const holidayDates = holidayRows.filter((r) => r[1] && r[1].startsWith(String(year))).map((r) => r[1]);
@@ -2844,4 +2879,204 @@ if (require.main === module) {
   app.listen(PORT, '0.0.0.0', () => console.log(`API → http://0.0.0.0:${PORT}`));
 }
 
+
+// ── REPORTS (Excel Downloads) ────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+
+app.get('/api/reports/download/:type', async (req, res) => {
+  try {
+    const { type } = req.params;
+    const wb = XLSX.utils.book_new();
+
+    const pct = (v, d) => (v !== '' && v != null && !isNaN(v) ? (+v * 100).toFixed(0) + '%' : d || '');
+
+    // ══ Date range filtering ════════════════════════════════════════════════
+    const { from, to, preview } = req.query;
+    const hasDateFilter = from || to;
+    const isPreview = preview === 'true';
+
+    const [projRows, { map: rawHoursMap, rows: phRowsRaw }, empRows] = await Promise.all([
+      getValues(SHEETS.PROJECTS, 'A2:X300'),
+      computeProjectHours(),
+      getValues(SHEETS.EMPLOYEES, 'A2:S300'),
+    ]);
+
+    // Apply date range filter to phRows if specified
+    const phRows = hasDateFilter
+      ? phRowsRaw.filter((r) => {
+          const d = r[1];
+          if (!d) return false;
+          if (from && d < from) return false;
+          if (to && d > to) return false;
+          return true;
+        })
+      : phRowsRaw;
+
+    // Rebuild hoursMap from filtered rows
+    const hoursMap = hasDateFilter
+      ? (() => {
+          const m = {};
+          phRows.filter((r) => r[5] && r[8]).forEach((r) => {
+            const pid = r[5];
+            if (!m[pid]) m[pid] = { spent: 0, reqEff: 0, actEff: 0 };
+            m[pid].spent  += parseFloat(r[8]) || 0;
+            m[pid].reqEff += parseFloat(r[9]) || 0;
+            m[pid].actEff += parseFloat(r[10]) || 0;
+          });
+          return m;
+        })()
+      : rawHoursMap;
+
+    const empRatioMap = {};
+    empRows.forEach((r) => { if (r[0]) { empRatioMap[r[0]] = parseEffRatio(r[7]) || 0.75; } });
+
+    const projMeta = {};
+    projRows.forEach((r) => {
+      if (!r[0]) return;
+      projMeta[r[0]] = { lead: r[4] || '', clientHrs: parseFloat(r[7]) || 0 };
+    });
+
+    // Append date range to filename if filtered
+    const dateSuffix = hasDateFilter ? ` (${from || '…'} – ${to || '…'})` : '';
+
+    let previewHeaders, previewRows;
+
+    function aggregateByLead(phFilter) {
+      const leadAgg = {};
+      phRows.filter(phFilter).forEach((ph) => {
+        const projId = ph[5];
+        const hrs = parseFloat(ph[8]) || 0;
+        const re = parseFloat(ph[9]) || 0;
+        const ae = parseFloat(ph[10]) || 0;
+        const baseId = isDerivedProjId(projId) ? baseFromDerived(projId) : projId;
+        const meta = projMeta[baseId] || { lead: '(Unassigned)', clientHrs: 0 };
+        if (!leadAgg[meta.lead]) {
+          leadAgg[meta.lead] = { leadName: meta.lead, clientHrs: 0, spent: 0, reqEff: 0, actEff: 0, seenProjs: {} };
+        }
+        const l = leadAgg[meta.lead];
+        l.spent += hrs;
+        l.reqEff += re;
+        l.actEff += ae;
+        if (!l.seenProjs[baseId]) {
+          l.seenProjs[baseId] = true;
+          l.clientHrs += meta.clientHrs;
+        }
+      });
+      return Object.values(leadAgg).map((l) => ({
+        leadName: l.leadName,
+        clientHrs: +l.clientHrs.toFixed(2),
+        spent: +l.spent.toFixed(2),
+        reqEff: +l.reqEff.toFixed(2),
+        actEff: +l.actEff.toFixed(2),
+        actualEff: l.spent > 0 ? +(l.clientHrs / l.spent).toFixed(4) : 0,
+        expEff: l.reqEff > 0 ? +(l.clientHrs / l.reqEff).toFixed(4) : 0,
+      })).sort((a, b) => b.spent - a.spent);
+    }
+
+    if (type === 'project') {
+      const rows = [];
+      projRows.forEach((r, i) => {
+        if (!r[0]) return;
+        const ph  = hoursMap[r[0]]              || { spent: 0, reqEff: 0, actEff: 0 };
+        const qc  = hoursMap[r[0]+'-QC']        || { spent: 0, reqEff: 0, actEff: 0 };
+        const fi  = hoursMap[r[0]+'-FB-Int']    || { spent: 0, reqEff: 0, actEff: 0 };
+        const fc  = hoursMap[r[0]+'-FB-Client'] || { spent: 0, reqEff: 0, actEff: 0 };
+        const sp  = ph.spent + qc.spent + fi.spent + fc.spent;
+        const re  = ph.reqEff + qc.reqEff + fi.reqEff + fc.reqEff;
+        const ae  = ph.actEff + qc.actEff + fi.actEff + fc.actEff;
+        const ch  = parseFloat(r[7]) || 0;
+        rows.push([i+1, r[1]||'', r[3]||'', r[2]||'', ch||0,
+          +sp.toFixed(2), +re.toFixed(2), +ae.toFixed(2),
+          pct(sp>0?+(ch/sp).toFixed(4):0), pct(re>0?+(ch/re).toFixed(4):0), r[4]||'']);
+      });
+      previewHeaders = ['S.No','Project Name','Status','Client','Hrs From Client','Total Spent Time','Req Eff Time','Act Eff Time','Project Actual Efficiency','Efficiency (Exp)','Leading Person'];
+      previewRows = rows;
+      if (isPreview) return res.json({ headers: previewHeaders, rows: previewRows });
+      const ws = XLSX.utils.aoa_to_sheet([previewHeaders, ...rows]);
+      ws['!cols'] = [{wch:5},{wch:32},{wch:14},{wch:12},{wch:14},{wch:16},{wch:14},{wch:14},{wch:24},{wch:22},{wch:16}];
+      XLSX.utils.book_append_sheet(wb, ws, 'Project Report');
+    } else if (type === 'qaqc') {
+      const rows = [];
+      projRows.forEach((r, i) => {
+        if (!r[0] || r[20] !== 'Yes') return;
+        const qc  = hoursMap[r[0]+'-QC'] || { spent: 0, reqEff: 0, actEff: 0 };
+        const ch  = parseFloat(r[7]) || 0;
+        const sp  = qc.spent;
+        const ae  = qc.actEff;
+        const did = r[0]+'-QC';
+        let er = 0;
+        phRows.filter(p=>p[5]===did&&p[2]).forEach(p=>{er+=(parseFloat(p[8])||0)*(empRatioMap[p[2]]||0.75);});
+        rows.push([i+1, r[1]||'', r[3]||'', r[2]||'', ch||0,
+          +sp.toFixed(2), +er.toFixed(2), +ae.toFixed(2),
+          pct(sp>0?+((ch/sp)/10).toFixed(4):0), pct(er>0?+((ch/er)/10).toFixed(4):0), r[21]||r[4]||'']);
+      });
+      previewHeaders = ['S.No','Project Name','Status','Client','Hrs From Client','Total Spent Time','Req Eff Time','Act Eff Time','Project Actual Efficiency','Efficiency (Exp)','Leading Person'];
+      previewRows = rows;
+      if (isPreview) return res.json({ headers: previewHeaders, rows: previewRows });
+      const ws = XLSX.utils.aoa_to_sheet([previewHeaders, ...rows]);
+      ws['!cols'] = [{wch:5},{wch:32},{wch:14},{wch:12},{wch:14},{wch:16},{wch:14},{wch:14},{wch:24},{wch:22},{wch:16}];
+      XLSX.utils.book_append_sheet(wb, ws, 'QAQC Report');
+    } else if (type === 'feedback') {
+      const rows = [];
+      projRows.forEach((r, i) => {
+        if (!r[0] || r[18] !== 'Yes') return;
+        const fc  = hoursMap[r[0]+'-FB-Client'] || { spent: 0, reqEff: 0, actEff: 0 };
+        const ch  = parseFloat(r[7]) || 0;
+        const sp  = fc.spent;
+        const ae  = fc.actEff;
+        const did = r[0]+'-FB-Client';
+        let er = 0;
+        phRows.filter(p=>p[5]===did&&p[2]).forEach(p=>{er+=(parseFloat(p[8])||0)*(empRatioMap[p[2]]||0.75);});
+        rows.push([i+1, r[1]||'', r[3]||'', r[2]||'', ch||0,
+          +sp.toFixed(2), +er.toFixed(2), +ae.toFixed(2),
+          pct(sp>0?+(sp/ch).toFixed(4):0), pct(er>0?+(er/ch).toFixed(4):0), r[23]||r[4]||'']);
+      });
+      previewHeaders = ['S.No','Project Name','Status','Client','Hrs From Client','Total Spent Time','Req Eff Time','Act Eff Time','Project Actual Efficiency','Efficiency (Exp)','Leading Person'];
+      previewRows = rows;
+      if (isPreview) return res.json({ headers: previewHeaders, rows: previewRows });
+      const ws = XLSX.utils.aoa_to_sheet([previewHeaders, ...rows]);
+      ws['!cols'] = [{wch:5},{wch:32},{wch:14},{wch:12},{wch:14},{wch:16},{wch:14},{wch:14},{wch:24},{wch:22},{wch:16}];
+      XLSX.utils.book_append_sheet(wb, ws, 'Feedback Report');
+    } else if (type === 'production-efficiency') {
+      const leads = aggregateByLead(p=>p[2]&&p[5]&&!isDerivedProjId(p[5]));
+      previewHeaders = ['Lead','Hrs From Client','Total Spent Time','Req Eff Time','Act Eff Time','Actual Efficiency','Efficiency as per experience'];
+      previewRows = leads.map(l=>[l.leadName,l.clientHrs,l.spent,l.reqEff,l.actEff,pct(l.actualEff),pct(l.expEff)]);
+      if (isPreview) return res.json({ headers: previewHeaders, rows: previewRows });
+      const ws = XLSX.utils.aoa_to_sheet([previewHeaders, ...previewRows]);
+      ws['!cols'] = [{wch:20},{wch:14},{wch:16},{wch:14},{wch:14},{wch:18},{wch:26}];
+      XLSX.utils.book_append_sheet(wb, ws, 'Production Efficiency');
+    } else if (type === 'qc-efficiency') {
+      const leads = aggregateByLead(p=>p[2]&&p[5]&&p[5].endsWith('-QC'));
+      previewHeaders = ['Lead','Hrs From Client','Total Spent Time','Req Eff Time','Act Eff Time','Actual Efficiency','Efficiency as per experience'];
+      previewRows = leads.map(l=>[l.leadName,l.clientHrs,l.spent,l.reqEff,l.actEff,pct((l.actualEff||0)/10),pct((l.expEff||0)/10)]);
+      if (isPreview) return res.json({ headers: previewHeaders, rows: previewRows });
+      const ws = XLSX.utils.aoa_to_sheet([previewHeaders, ...previewRows]);
+      ws['!cols'] = [{wch:20},{wch:14},{wch:16},{wch:14},{wch:14},{wch:18},{wch:26}];
+      XLSX.utils.book_append_sheet(wb, ws, 'QC Efficiency');
+    } else if (type === 'feedback-efficiency') {
+      const leads = aggregateByLead(p=>p[2]&&p[5]&&p[5].endsWith('-FB-Client'));
+      previewHeaders = ['Lead','Hrs From Client','Total Spent Time','Req Eff Time','Act Eff Time','Actual Efficiency','Efficiency as per experience'];
+      previewRows = leads.map(l=>[l.leadName,l.clientHrs,l.spent,l.reqEff,l.actEff,pct(l.spent>0?l.spent/l.clientHrs:0),pct(l.reqEff>0?l.reqEff/l.clientHrs:0)]);
+      if (isPreview) return res.json({ headers: previewHeaders, rows: previewRows });
+      const ws = XLSX.utils.aoa_to_sheet([previewHeaders, ...previewRows]);
+      ws['!cols'] = [{wch:20},{wch:14},{wch:16},{wch:14},{wch:14},{wch:18},{wch:26}];
+      XLSX.utils.book_append_sheet(wb, ws, 'Feedback Efficiency');
+    } else {
+      return res.status(400).json({ error: 'Unknown report type.' });
+    }
+
+    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    const names = { project: 'Project_Report', qaqc: 'QAQC_Report', feedback: 'Feedback_Report', 'production-efficiency': 'Production_Efficiency', 'qc-efficiency': 'QC_Efficiency', 'feedback-efficiency': 'Feedback_Efficiency' };
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    const baseName = names[type] || 'Report';
+    res.setHeader('Content-Disposition', `attachment; filename="${baseName}${dateSuffix}.xlsx"`);
+    res.send(buf);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+
 module.exports = app;
+
+// ─────────────────────────────────────────────────────────────────────────────

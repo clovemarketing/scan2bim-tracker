@@ -65,7 +65,8 @@ const WMO_CODES = {
   clear: [0, 1],
   cloudy: [2, 3],
   fog: [45, 48],
-  rain: [51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82],
+  drizzle: [51, 53, 55, 56, 57],
+  rain: [61, 63, 65, 66, 67, 80, 81, 82],
   snow: [71, 73, 75, 77, 85, 86],
   thunder: [95, 96, 99],
 };
@@ -90,6 +91,8 @@ const CARD_BG = {
   'thunder-night': 'radial-gradient(178.94% 106.41% at 26.42% 106.41%, #2a203a 0%, rgba(255,255,255,0) 71.88%), #1a1428',
   'fog-day': 'radial-gradient(178.94% 106.41% at 26.42% 106.41%, #b0bcc4 0%, rgba(255,255,255,0) 71.88%), #d0d6dc',
   'fog-night': 'radial-gradient(178.94% 106.41% at 26.42% 106.41%, #3a3e44 0%, rgba(255,255,255,0) 71.88%), #2a2e34',
+  'drizzle-day': 'radial-gradient(178.94% 106.41% at 26.42% 106.41%, #8ab4c8 0%, rgba(255,255,255,0) 71.88%), #c8d8e0',
+  'drizzle-night': 'radial-gradient(178.94% 106.41% at 26.42% 106.41%, #3a4a5a 0%, rgba(255,255,255,0) 71.88%), #2a3540',
 };
 
 /* Dynamic text colors per theme — literal full class names required for Tailwind JIT */
@@ -106,6 +109,8 @@ const TEXT_COLORS = {
   'thunder-night':  { text: 'text-white',      sub: 'text-purple-200/70' },
   'fog-day':        { text: 'text-slate-800',  sub: 'text-slate-600/70' },
   'fog-night':      { text: 'text-white',      sub: 'text-slate-300/70' },
+  'drizzle-day':    { text: 'text-slate-700',  sub: 'text-slate-600/70' },
+  'drizzle-night':  { text: 'text-white',      sub: 'text-blue-200/70' },
 };
 
 function isNight(weather) {
@@ -119,7 +124,8 @@ function WeatherArt({ condition, night }) {
   const snow = condition === 'snow';
   const thunder = condition === 'thunder';
   const fog = condition === 'fog';
-  const cloudCls = night ? 'cloud-dark' : (clear || thunder ? 'cloud-grey' : 'cloud-blue');
+  const drizzle = condition === 'drizzle';
+  const cloudCls = night ? 'cloud-dark' : (clear || thunder ? 'cloud-grey' : drizzle ? 'cloud-drizzle' : 'cloud-blue');
 
   return (
     <>
@@ -212,6 +218,37 @@ function WeatherArt({ condition, night }) {
           <div className="fog-puff" />
         </div>
       )}
+
+      {/* Drizzle — fine, misty light rain */}
+      {drizzle && (
+        <>
+          {!night && (
+            <>
+              <div className="weather-sun" style={{ opacity: 0.08 }} />
+              <div className="weather-sun glow" style={{ opacity: 0.05 }} />
+            </>
+          )}
+          {night && (
+            <div className="weather-moon" style={{ opacity: 0.3 }} />
+          )}
+          <div className="weather-cloud front" style={{ opacity: 0.5 }}>
+            <div className={`cloud-body cloud-front ${cloudCls}`}>
+              <div className="cloud-bump" />
+            </div>
+          </div>
+          <div className="weather-cloud back" style={{ opacity: 0.35 }}>
+            <div className={`cloud-body cloud-back ${cloudCls}`}>
+              <div className="cloud-bump" />
+            </div>
+          </div>
+          <div className="drizzle-container">
+            {Array.from({ length: 16 }).map((_, i) => (
+              <div key={i} className="drizzle-drop" style={{ left: `${3 + i * 6}%`, animationDelay: `${i * 0.2}s` }} />
+            ))}
+          </div>
+          <div className="drizzle-mist" />
+        </>
+      )}
     </>
   );
 }
@@ -240,9 +277,9 @@ function GreetingCard({ name }) {
 
   const fetchWeather = useCallback(async (lat, lon) => {
     try {
-      const res = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true&timezone=auto`);
+      const res = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,is_day&timezone=auto`);
       const data = await res.json();
-      setWeather(data.current_weather);
+      setWeather(data.current);
     } catch { /* ignore */ }
     try {
       const res = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=en`);
@@ -258,14 +295,25 @@ function GreetingCard({ name }) {
       () => {},
       { timeout: 5000, enableHighAccuracy: false },
     );
+    const interval = setInterval(() => {
+      navigator.geolocation?.getCurrentPosition(
+        (pos) => fetchWeather(pos.coords.latitude, pos.coords.longitude),
+        () => fetchWeather(17.6868, 83.2185),
+        { timeout: 3000, enableHighAccuracy: false },
+      );
+    }, 300000); // 5 minutes
+    return () => clearInterval(interval);
   }, [fetchWeather]);
 
-  const code = weather?.weathercode ?? 0;
+  const code = weather?.weather_code ?? 0;
   const condition = getCondition(code);
   const night = isNight(weather);
   const themeKey = `${condition}-${night ? 'night' : 'day'}`;
   const bg = CARD_BG[themeKey] || CARD_BG['clear-day'];
-  const temp = weather?.temperature != null ? Math.round(weather.temperature) : '—';
+  const temp = weather?.temperature_2m != null ? Math.round(weather.temperature_2m) : '—';
+  const feelsLike = weather?.apparent_temperature != null ? Math.round(weather.apparent_temperature) : null;
+  const humidity = weather?.relative_humidity_2m;
+  const precip = weather?.precipitation;
   const themeColors = TEXT_COLORS[themeKey] || (night ? { text: 'text-blue-100', sub: 'text-blue-200/50' } : { text: 'text-amber-900', sub: 'text-amber-800/50' });
   const textCls = themeColors.text;
   const subCls = themeColors.sub;
@@ -293,11 +341,22 @@ function GreetingCard({ name }) {
         </div>
         <div className={`relative z-10 h-full flex flex-col justify-between`}>
           <div>
-            <div className="flex items-baseline gap-2">
+            <div className="flex items-baseline gap-2 flex-wrap">
               <span className={`text-xl font-bold ${textCls}`}>{temp}°C</span>
-              <span className={`text-[10px] ${subCls}`}>{location || 'Visakhapatnam'}</span>
+              {feelsLike != null && (
+                <span className={`text-[10px] ${subCls}`}>Feels {feelsLike}°</span>
+              )}
             </div>
-            <p className={`text-[11px] ${subCls} mt-0.5`}>{dayName}, {dateStr}</p>
+            <div className="flex items-center gap-2 mt-0.5">
+              <p className={`text-[11px] ${subCls}`}>{dayName}, {dateStr}</p>
+              {humidity != null && (
+                <span className={`text-[10px] ${subCls} opacity-70`}>💧 {humidity}%</span>
+              )}
+              {precip != null && precip > 0 && (
+                <span className={`text-[10px] ${subCls} opacity-70`}>🌧 {precip}mm</span>
+              )}
+            </div>
+            <p className={`text-[10px] ${subCls}`}>{location || 'Visakhapatnam'}</p>
           </div>
           <div>
             <p className={`text-sm font-bold ${textCls} leading-tight`}>{greet}{name ? `, ${name}` : ''}</p>
