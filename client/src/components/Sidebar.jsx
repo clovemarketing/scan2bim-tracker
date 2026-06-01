@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
-import { LayoutDashboard, Users, FolderKanban, CalendarCheck, Clock, Database, Settings, ChevronRight, CalendarRange, RefreshCw, BarChart2, Target, LogOut, ChevronLeft, ShieldCheck, MessageSquare, TrendingUp, FileText } from 'lucide-react';
+import { LayoutDashboard, Users, FolderKanban, CalendarCheck, Clock, Database, Settings, ChevronRight, CalendarRange, RefreshCw, BarChart2, Target, LogOut, ChevronLeft, ShieldCheck, MessageSquare, TrendingUp, FileText, UserCheck } from 'lucide-react';
 
 const NAV = [
   { key: 'dashboard',        label: 'Dashboard',        icon: LayoutDashboard },
   { key: 'employees',        label: 'Employees',        icon: Users },
   { key: 'projects',         label: 'Projects',         icon: FolderKanban },
+  { key: 'emp-map',          label: 'EMP-Project Map',  icon: UserCheck },
   { key: 'attendance',       label: 'Attendance',       icon: CalendarCheck },
   { key: 'project-hours',    label: 'Project Hours',    icon: Clock },
   { key: 'project-hours-analytics', label: 'Analytics', icon: BarChart2 },

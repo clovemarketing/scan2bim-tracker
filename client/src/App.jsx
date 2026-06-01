@@ -21,6 +21,7 @@ const MonthEndSummary = lazy(() => import('./pages/MonthEndSummary'));
 const QAQCPage = lazy(() => import('./pages/QAQCPage'));
 const FeedbackPage = lazy(() => import('./pages/FeedbackPage'));
 const ReportsPage = lazy(() => import('./pages/ReportsPage'));
+const EmpProjectMap = lazy(() => import('./pages/EmpProjectMap'));
 const Login = lazy(() => import('./pages/Login'));
 
 let toastId = 1;
@@ -28,7 +29,7 @@ let toastId = 1;
 // Pages each role can access. null = unrestricted (all pages).
 const ROLE_PAGES = {
   Admin: null,
-  'Team Lead': ['employees', 'attendance', 'division-targets', 'shift-roster'],
+  'Team Lead': ['employees', 'projects', 'attendance', 'division-targets', 'shift-roster'],
 };
 
 export default function App() {
@@ -100,6 +101,7 @@ export default function App() {
     'reports': <ReportsPage toast={toast} />,
     'division-targets': <DivisionTargets toast={toast} currentUser={user} />,
     'month-end-summary': <MonthEndSummary toast={toast} />,
+    'emp-map': <EmpProjectMap toast={toast} />,
     'shift-roster': <ShiftRoster toast={toast} />,
     data: <DataManagement toast={toast} />,
     settings: <Settings toast={toast} currentUser={user} />,
