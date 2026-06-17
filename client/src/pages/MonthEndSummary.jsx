@@ -9,6 +9,7 @@ import { decToHHMM, hhmmToDec } from '../lib/formatters';
 import LoadingScreen from '../components/LoadingScreen';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const MONTHS_FULL = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
 function StatCard({ icon: Icon, label, value, sub, color }) {
   return (
@@ -74,6 +75,7 @@ export default function MonthEndSummary({ toast }) {
 
   const monthLabel = `${MONTHS[month]} ${year}`;
   const nextMonthLabel = month === 11 ? `${MONTHS[0]} ${year + 1}` : `${MONTHS[(month + 1) % 12]} ${month === 11 ? year + 1 : year}`;
+  const nextMonthFullLabel = month === 11 ? `${MONTHS_FULL[0]} ${year + 1}` : `${MONTHS_FULL[month + 1]} ${year}`;
 
   // ── Export closing month data ────────────────────────────────────────
   const exportCloseMonth = () => {
@@ -109,11 +111,41 @@ export default function MonthEndSummary({ toast }) {
     if (!data) return;
     const wb = XLSX.utils.book_new();
 
-    const projHeaders = ['Proj ID', 'Project Name', 'Client', 'Team Lead', 'Client Hrs', 'Spent To Date', 'Remaining Client Hrs', 'Status'];
-    const projRows = data.nextMonthProjects.map((p) => [
-      p.projId, p.projName, p.client, p.teamLead,
-      p.clientHrs, p.totalSpentToDate, p.remainingClientHrs, p.status,
-    ]);
+    // Use carry-over list if populated, otherwise fall back to all In Progress projects
+    const carryOver = data.nextMonthProjects.length > 0
+      ? data.nextMonthProjects
+      : data.projectSummary
+          .filter((p) => p.status === 'In Progress')
+          .map((p) => ({
+            projId: p.projId,
+            projName: p.projName,
+            client: p.client,
+            teamLead: p.teamLead,
+            clientHrs: p.clientHrs,
+            totalSpentToDate: p.cumulativeSpentHrs,
+            remainingClientHrs: p.monthRemaining,
+            status: p.status,
+          }));
+
+    // Closing month project summary used to fill carry-over data
+    const closingProjMap = {};
+    data.projectSummary.forEach((p) => { closingProjMap[p.projId] = p; });
+
+    const projHeaders = ['Proj ID', 'Project Name | Month Year', 'Client', 'Team Lead', 'Client Hrs', 'Closing Month Spent Hrs', 'Cumulative Spent Hrs', 'Remaining Client Hrs', 'Status'];
+    const projRows = carryOver.map((p) => {
+      const closing = closingProjMap[p.projId] || {};
+      return [
+        p.projId,
+        `${p.projName} | ${nextMonthFullLabel}`,
+        p.client,
+        p.teamLead,
+        p.clientHrs,
+        closing.monthSpentHrs != null ? +closing.monthSpentHrs.toFixed(2) : '',
+        p.totalSpentToDate,
+        p.remainingClientHrs,
+        p.status,
+      ];
+    });
     const projWS = XLSX.utils.aoa_to_sheet([projHeaders, ...projRows]);
     XLSX.utils.book_append_sheet(wb, projWS, 'Next Month Projects');
 
@@ -125,8 +157,8 @@ export default function MonthEndSummary({ toast }) {
     const empWS = XLSX.utils.aoa_to_sheet([empHeaders, ...empRows]);
     XLSX.utils.book_append_sheet(wb, empWS, 'Next Month Employees');
 
-    XLSX.writeFile(wb, `Next_Month_Import_${nextMonthLabel.replace(' ', '_')}.xlsx`);
-    toast.success('Next month import template exported');
+    XLSX.writeFile(wb, `Next_Month_Import_${nextMonthFullLabel.replace(' ', '_')}.xlsx`);
+    toast.success(`Next month import template exported for ${nextMonthFullLabel}`);
   };
 
   // ── Derived stats ────────────────────────────────────────────────────

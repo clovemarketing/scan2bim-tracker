@@ -310,8 +310,10 @@ export default function Attendance({ toast, currentUser }) {
     setSessionForm({ projId:'', projName:'', hrsHhmm:'08:30', miscHhmm:'', actEffHrs:'', remarks:'' });
     try {
       const maps = await api.empMapByEmployee(emp.empId);
-      const assignedIds = maps.map((m) => m[4]);
-      const filteredProjs = assignedIds.length > 0 ? inProgProjects.filter((p) => assignedIds.includes(p[0])) : inProgProjects;
+      const assignedIds = new Set(maps.map((m) => m[4]));
+      // Also include projects where this employee is the team lead
+      inProgProjects.forEach((p) => { if (p[4] === emp.empName) assignedIds.add(p[0]); });
+      const filteredProjs = assignedIds.size > 0 ? inProgProjects.filter((p) => assignedIds.has(p[0])) : inProgProjects;
       setEmpAssignments((prev) => ({ ...prev, [emp.empId]: filteredProjs }));
     } catch { setEmpAssignments((prev) => ({ ...prev, [emp.empId]: inProgProjects })); }
     setSessionModal(emp);

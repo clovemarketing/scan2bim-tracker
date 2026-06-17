@@ -1395,7 +1395,7 @@ const MAP_HEADERS = ['Map ID', 'Employee Name', 'EMP ID', 'Project Name', 'Proj 
 
 app.get('/api/emp-map', async (req, res) => {
   try {
-    const rows = await getValues(SHEETS.EMP_MAP, 'A1:K300');
+    const rows = await getValues(SHEETS.EMP_MAP, 'A1:K2000');
     if (!rows.length) return res.json({ headers: MAP_HEADERS, data: [] });
     const [, ...data] = rows;
     const result = { headers: MAP_HEADERS, data: [], rowIndices: [] };
@@ -1411,7 +1411,7 @@ app.get('/api/emp-map', async (req, res) => {
 
 app.get('/api/emp-map/by-employee/:empId', async (req, res) => {
   try {
-    const rows = await getValues(SHEETS.EMP_MAP, 'A2:K300');
+    const rows = await getValues(SHEETS.EMP_MAP, 'A2:K2000');
     const matches = rows.filter((r) => r[2] === req.params.empId && r[8] === 'Active').map((r) => { while (r.length < 11) r.push(''); return r; });
     res.json(matches);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -1419,7 +1419,7 @@ app.get('/api/emp-map/by-employee/:empId', async (req, res) => {
 
 app.get('/api/emp-map/by-lead/:lead', async (req, res) => {
   try {
-    const rows = await getValues(SHEETS.EMP_MAP, 'A2:K300');
+    const rows = await getValues(SHEETS.EMP_MAP, 'A2:K2000');
     const matches = rows.filter((r) => r[10] === req.params.lead).map((r) => { while (r.length < 11) r.push(''); return r; });
     res.json(matches);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -1429,7 +1429,7 @@ app.post('/api/emp-map/assign', async (req, res) => {
   try {
     const { empName, empId, projName, projId, role, teamLead } = req.body;
     // Generate next Map ID
-    const rows = await getValues(SHEETS.EMP_MAP, 'A2:A300');
+    const rows = await getValues(SHEETS.EMP_MAP, 'A2:A2000');
     const nextNum = rows.filter((r) => r[0]).length + 1;
     const mapId = `MAP${String(nextNum).padStart(3, '0')}`;
     await appendRows(SHEETS.EMP_MAP, [[mapId, empName, empId, projName, projId, role, '0', '1', 'Active', '', teamLead]]);
@@ -1926,7 +1926,7 @@ app.get('/api/dashboard', async (req, res) => {
       getValues(SHEETS.PROJECTS, 'A2:X300'),
       getValues(SHEETS.ATTENDANCE, 'A2:N5000'),
       getValues(SHEETS.PROJ_HOURS, 'A2:N2000'),
-      getValues(SHEETS.EMP_MAP, 'A2:K300'),
+      getValues(SHEETS.EMP_MAP, 'A2:K2000'),
     ]);
     const today = todayStr();
     const activeEmp = empRows.filter((r) => r[0] && r[6] === 'Active');
@@ -2063,7 +2063,7 @@ app.get('/api/team-analytics', async (req, res) => {
   try {
     const [phRows, empMapRows, projRows, empRows] = await Promise.all([
       getValues(SHEETS.PROJ_HOURS, 'A2:N2000'),
-      getValues(SHEETS.EMP_MAP, 'A2:K300'),
+      getValues(SHEETS.EMP_MAP, 'A2:K2000'),
       getValues(SHEETS.PROJECTS, 'A2:M300'),
       getValues(SHEETS.EMPLOYEES, 'A2:O300'),
     ]);

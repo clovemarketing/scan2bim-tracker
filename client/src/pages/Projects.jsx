@@ -601,6 +601,11 @@ export default function Projects({ toast }) {
     f.push(originalRow[23] || '');  // 20 - FB Client Assigned Person
     const projId = f[0];
     const existing = new Set(empMapRows.filter((m) => m[4] === projId && m[8] === 'Active').map((m) => m[2]));
+    if (existing.size === 0 && f[4]) {
+      const leadLower = f[4].trim().toLowerCase();
+      const byLead = empRows.filter((e) => (e[3] || '').trim().toLowerCase() === leadLower);
+      byLead.forEach((e) => existing.add(e[0]));
+    }
     setSelectedMembers(existing); setMemberSearch('');
     setQcMembers(new Set(empMapRows.filter((m) => m[4] === projId + '-QC' && m[8] === 'Active').map((m) => m[2])));
     setFbIntMembers(new Set(empMapRows.filter((m) => m[4] === projId + '-FB-Int' && m[8] === 'Active').map((m) => m[2])));
@@ -740,11 +745,14 @@ export default function Projects({ toast }) {
 
   const teamMembersUnderLead = useMemo(() => {
     const q = memberSearch.trim().toLowerCase();
-    return empRows.filter((e) => {
+    const lead = (form[4] || '').trim().toLowerCase();
+    const byLead = lead ? empRows.filter((e) => (e[3] || '').trim().toLowerCase() === lead) : empRows;
+    const pool = byLead.length > 0 ? byLead : empRows;
+    return pool.filter((e) => {
       if (q && !e[0].toLowerCase().includes(q) && !e[1].toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [empRows, memberSearch]);
+  }, [empRows, memberSearch, form]);
 
   const toggleMember = (empId) => {
     setSelectedMembers((prev) => {
@@ -1364,7 +1372,8 @@ export default function Projects({ toast }) {
               <label className="label">Team Lead</label>
               <SearchableSelect value={form[4]} onChange={(v) => {
                 set(4, v);
-                setSelectedMembers(new Set(empRows.filter((e) => e[3] === v).map((e) => e[0])));
+                const vl = (v || '').trim().toLowerCase();
+                setSelectedMembers(new Set(empRows.filter((e) => (e[3] || '').trim().toLowerCase() === vl).map((e) => e[0])));
               }} employees={empRows} />
             </div>
             {form[4] && (
