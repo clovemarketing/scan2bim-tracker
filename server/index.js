@@ -899,9 +899,9 @@ app.get('/api/projects', async (req, res) => {
       const projActEff   = spentHrs  > 0 ? +(clientHrs / (spentHrs / 60)).toFixed(4)  : '';
       const row = [...r.slice(0, 11)];
       while (row.length < 11) row.push('');
-      row[8]  = spentHrs.toFixed(2);
-      row[9]  = reqEffHrs.toFixed(2);
-      row[10] = actEffHrs.toFixed(2);
+      row[8]  = (spentHrs / 60).toFixed(2);   // store as decimal hours (clientHrs is hours)
+      row[9]  = (reqEffHrs / 60).toFixed(2);
+      row[10] = (actEffHrs / 60).toFixed(2);
       row[11] = remarks;
       row[12] = remainingHrs;
       row[13] = projEff;
@@ -1375,6 +1375,23 @@ app.post('/api/projects/import', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+app.post('/api/project-hours/import', async (req, res) => {
+  try {
+    const { rows, replace } = req.body;
+    if (!rows || !rows.length) return res.status(400).json({ error: 'No rows provided' });
+    const padded = rows.map((r) => {
+      const row = [...r];
+      while (row.length < 14) row.push('');
+      return row;
+    });
+    if (replace) {
+      await clearRange(SHEETS.PROJ_HOURS, 'A2:Z5000');
+    }
+    await appendRows(SHEETS.PROJ_HOURS, padded);
+    res.json({ success: true, count: padded.length });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/api/projects/template', async (req, res) => {
   try {
     const headers = ['Proj ID', 'Project Name', 'Client', 'Status', 'Team Lead', 'Start (Day#)', 'End (Day#)', 'Client Hrs', 'Total Spent Hrs', 'Req Eff Hrs', 'Act Eff Hrs', 'Proj Eff %', 'Remarks', 'Remaining Hrs'];
@@ -1821,32 +1838,35 @@ app.post('/api/div-targets', async (req, res) => {
       }
     });
     const batchData = [];
+    const newRows = [];
+    let entryNum = rows.filter((r) => r[0]).length + 1;
     // upsert division-level target
     if (divisionTarget != null) {
       const dtVal = parseFloat(divisionTarget) || 0;
       if (existing['__DIVISION__']) {
         batchData.push({ range: `${SHEETS.DIV_TARGETS}!D${existing['__DIVISION__']}:F${existing['__DIVISION__']}`, values: [['__DIVISION__', dtVal, now]] });
       } else {
-        const entryNum = rows.filter((r) => r[0]).length + 1;
-        await appendRows(SHEETS.DIV_TARGETS, [[entryNum, year, month, '__DIVISION__', dtVal, now]]);
+        newRows.push([entryNum++, year, month, '__DIVISION__', dtVal, now]);
       }
     }
     // upsert team-level targets
-    const nextEntry = rows.filter((r) => r[0]).length + 1;
-    let entryNum = nextEntry;
     for (const [tl, val] of Object.entries(targets || {})) {
       const targetHrs = parseFloat(val) || 0;
       if (existing[tl]) {
         batchData.push({ range: `${SHEETS.DIV_TARGETS}!D${existing[tl]}:F${existing[tl]}`, values: [[tl, targetHrs, now]] });
       } else {
-        await appendRows(SHEETS.DIV_TARGETS, [[entryNum++, year, month, tl, targetHrs, now]]);
+        newRows.push([entryNum++, year, month, tl, targetHrs, now]);
       }
     }
+    // single batchUpdate for all updates, single append for all new rows
     if (batchData.length) {
       await sheetsApi.spreadsheets.values.batchUpdate({
         spreadsheetId: SPREADSHEET_ID,
         requestBody: { valueInputOption: 'USER_ENTERED', data: batchData },
       });
+    }
+    if (newRows.length) {
+      await appendRows(SHEETS.DIV_TARGETS, newRows);
     }
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -1909,6 +1929,26 @@ app.post('/api/holidays', async (req, res) => {
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
+
+// ── PRODUCTIVITY MATRIX LOOKUP ────────────────────────────────────────────────
+function lookupProdMatrixMax(expYymm, prodMatrix) {
+  if (!expYymm || !prodMatrix || !prodMatrix.length) return 0;
+  const parts = String(expYymm).split(':');
+  const y = parseInt(parts[0]);
+  const m = parseInt(parts[1]) || 0;
+  if (isNaN(y)) return 0;
+  const expYears = y + m / 12;
+  for (const entry of prodMatrix) {
+    const label = entry.label || '';
+    const dM = label.match(/^([\d.]+)\s*-\s*([\d.]+)/);
+    const gM = label.match(/^>\s*([\d.]+)/);
+    let minExp = 0, maxExp = Infinity;
+    if (dM) { minExp = parseFloat(dM[1]); maxExp = parseFloat(dM[2]); }
+    else if (gM) { minExp = parseFloat(gM[1]); }
+    if (expYears >= minExp && expYears <= maxExp) return parseFloat(entry.max) || 0;
+  }
+  return 0;
+}
 
 // ── DASHBOARD ─────────────────────────────────────────────────────────────────
 function parseEffRatio(v) {
@@ -2234,13 +2274,48 @@ app.get('/api/month-end-summary', async (req, res) => {
     const holidayDates = holidayRows.filter((r) => r[1] && r[1].startsWith(String(year))).map((r) => r[1]);
     const wd = workingDaysInMonth(year, month, holidayDates);
 
-    const [empRows, projRows, phRows] = await Promise.all([
+    const [empRows, projRows, phRows, sett, dtRows] = await Promise.all([
       getValues(SHEETS.EMPLOYEES, 'A2:T300'),
       getValues(SHEETS.PROJECTS, 'A2:X300'),
       getValues(SHEETS.PROJ_HOURS, 'A2:N5000'),
+      fetchSettings(),
+      getValues(SHEETS.DIV_TARGETS, 'A2:F2000'),
     ]);
+    const prodMatrix = (sett && sett.prodMatrix) || [];
+
+    // div targets for this month
+    const divTeamTargets = {};
+    let divisionTargetHrs = 0;
+    dtRows.forEach((r) => {
+      if (parseInt(r[1]) !== year || parseInt(r[2]) !== month || !r[3]) return;
+      if (r[3] === '__DIVISION__') divisionTargetHrs = parseFloat(r[4]) || 0;
+      else divTeamTargets[r[3]] = parseFloat(r[4]) || 0;
+    });
+
+    // team capacity (prodMatrix × wd) for proportional allocation
+    const tlCapForMonth = {};
+    empRows.forEach((r) => {
+      if (!r[0]) return;
+      const status = (r[6] || '').toLowerCase();
+      if (status && status !== 'active') return;
+      const tl = r[3]; if (!tl) return;
+      const cap = lookupProdMatrixMax(r[18], prodMatrix) * wd;
+      if (cap > 0) tlCapForMonth[tl] = (tlCapForMonth[tl] || 0) + cap;
+    });
 
     const monthPhRows = phRows.filter((r) => r[1] && r[1].startsWith(prefix) && r[2] && r[5]);
+
+    // Cumulative spent (ALL months) per project from PROJ_HOURS — avoids
+    // reading PROJECTS col I which may have stale/wrong-unit values.
+    // Guard: skip rows where r[8] is strictly empty/null/undefined (not just falsy)
+    // so that 0-minute entries don't get excluded from the accumulation.
+    const allTimeProjSpentMin = {};
+    phRows.forEach((r) => {
+      if (!r[5]) return;
+      const raw = r[8];
+      if (raw === '' || raw === null || raw === undefined) return;
+      allTimeProjSpentMin[r[5]] = (allTimeProjSpentMin[r[5]] || 0) + (parseFloat(raw) || 0);
+    });
 
     // ── Employee lookup ─────────────────────────────────────────────────
     const empMeta = {};
@@ -2261,7 +2336,8 @@ app.get('/api/month-end-summary', async (req, res) => {
       projMeta[r[0]] = {
         name: r[1] || r[0], client: r[2] || '', status: r[3] || '',
         teamLead: r[4] || '', clientHrs: parseFloat(r[7]) || 0,
-        cumulativeSpentHrs: parseFloat(r[8]) || 0,
+        // Use live sum from PROJ_HOURS (all months, in hours) — bypasses stale col I
+        cumulativeSpentHrs: +((allTimeProjSpentMin[r[0]] || 0) / 60).toFixed(2),
         remainingHrs: parseFloat(r[12]),
       };
     });
@@ -2293,6 +2369,15 @@ app.get('/api/month-end-summary', async (req, res) => {
       projAgg[id].emps.add(r[2]);
     });
 
+    // Fallback: if allTimeProjSpentMin scan gave 0 for a project but month data exists,
+    // patch projMeta.cumulativeSpentHrs directly — handles the case where this is the
+    // first month of PROJ_HOURS data (all-time = current month).
+    Object.entries(projAgg).forEach(([pid, pa]) => {
+      if (projMeta[pid] && projMeta[pid].cumulativeSpentHrs === 0 && pa.spent > 0) {
+        projMeta[pid].cumulativeSpentHrs = +(pa.spent / 60).toFixed(2);
+      }
+    });
+
     // ── Calculate client hours per employee (proportional allocation) ───
     const empClientHrs = {};
     Object.entries(projAgg).forEach(([pid, pa]) => {
@@ -2314,7 +2399,16 @@ app.get('/api/month-end-summary', async (req, res) => {
       const meta = empMeta[id];
       const agg = empAgg[id];
       const spentHrs = agg ? +(agg.spent / 60).toFixed(2) : 0;
-      const targetHrs = +(meta.workHrsDay * meta.reqEffRatio * wd).toFixed(2);
+      // Target: employee's proportional share of team div-target by prod-matrix capacity.
+      // Falls back to prod-matrix capacity, then to workHrsDay×reqEffRatio if no matrix entry.
+      const empCap = lookupProdMatrixMax(meta.experience, prodMatrix) * wd;
+      const tlTarget = divTeamTargets[meta.teamLead];
+      const tlCap = tlCapForMonth[meta.teamLead] || 0;
+      const targetHrs = tlTarget > 0 && tlCap > 0 && empCap > 0
+        ? +((empCap / tlCap) * tlTarget).toFixed(2)
+        : empCap > 0
+        ? +empCap.toFixed(2)
+        : +(meta.workHrsDay * meta.reqEffRatio * wd).toFixed(2);
       const clientHrs = +(empClientHrs[id] || 0).toFixed(2);
       return {
         empId: id, name: meta.name, dept: meta.dept,
@@ -2353,17 +2447,22 @@ app.get('/api/month-end-summary', async (req, res) => {
     });
 
     // ── Next month carry-over data ──────────────────────────────────────
+    // Use clientHrs - cumulativeSpentHrs (same formula as monthRemaining in projectSummary)
+    // to avoid depending on the sheet's pre-computed column M which may be stale.
     const nextMonthProjects = projRows.filter((r) => {
       if (!r[0]) return false;
-      const remaining = projMeta[r[0]].remainingHrs;
-      return remaining !== null && remaining !== undefined && remaining > 0 && r[3] !== 'Completed';
+      const pm = projMeta[r[0]];
+      if (!pm || r[3] === 'Completed') return false;
+      if (!pm.clientHrs) return false;
+      return pm.clientHrs - pm.cumulativeSpentHrs > 0;
     }).map((r) => {
       const pm = projMeta[r[0]];
+      const remaining = +(pm.clientHrs - pm.cumulativeSpentHrs).toFixed(2);
       return {
         projId: r[0], projName: pm.name, client: pm.client,
         teamLead: pm.teamLead, clientHrs: pm.clientHrs,
         totalSpentToDate: pm.cumulativeSpentHrs,
-        remainingClientHrs: pm.remainingHrs,
+        remainingClientHrs: remaining,
         status: pm.status,
       };
     });
@@ -2382,10 +2481,33 @@ app.get('/api/month-end-summary', async (req, res) => {
     const totals = {
       totalSpentHrs: +projectSummary.reduce((s, p) => s + p.monthSpentHrs, 0).toFixed(2),
       totalClientHrs: +projectSummary.reduce((s, p) => s + p.clientHrs, 0).toFixed(2),
-      totalRemainingHrs: +projectSummary.reduce((s, p) => s + (p.monthRemaining || 0), 0).toFixed(2),
+      totalRemainingHrs: +nextMonthProjects.reduce((s, p) => s + p.remainingClientHrs, 0).toFixed(2),
     };
 
-    res.json({ year, month, employeeSummary, projectSummary, nextMonthProjects, nextMonthEmployees, totals });
+    // ── Consolidated PROJ_HOURS — one row per (employee × project), all-time ──
+    // Used to seed PROJ_HOURS after clearing, preserving cumulative history.
+    const empProjMap = {};
+    phRows.forEach((r) => {
+      if (!r[2] || !r[5]) return;
+      const key = `${r[2]}|${r[5]}`;
+      if (!empProjMap[key]) empProjMap[key] = {
+        empId: r[2], empName: r[3] || '', dept: r[4] || '',
+        projId: r[5], projName: r[6] || '', client: r[7] || '',
+        teamLead: r[13] || '',
+        spent: 0, reqEff: 0, actEff: 0,
+      };
+      empProjMap[key].spent  += parseFloat(r[8]) || 0;
+      empProjMap[key].reqEff += parseFloat(r[9]) || 0;
+      empProjMap[key].actEff += parseFloat(r[10]) || 0;
+    });
+    const consolidatedProjHrs = Object.values(empProjMap).map((e) => ({
+      ...e,
+      spent:  +e.spent.toFixed(2),
+      reqEff: +e.reqEff.toFixed(2),
+      actEff: +e.actEff.toFixed(2),
+    }));
+
+    res.json({ year, month, employeeSummary, projectSummary, nextMonthProjects, nextMonthEmployees, totals, consolidatedProjHrs });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo, useRef, useCallback } from 'react';
 import * as XLSX from 'xlsx';
 import {
   RefreshCw, Plus, Trash2, Clock, Users, Briefcase, TrendingUp,
-  BarChart2, Target, LayoutList, PieChart as PieIcon, Download, Save, X,
+  BarChart2, Target, LayoutList, PieChart as PieIcon, Download, Save, X, Upload,
 } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
@@ -11,6 +11,7 @@ import {
 import { api } from '../lib/api';
 import DataTable from '../components/DataTable';
 import Modal from '../components/Modal';
+import ImportMapperModal from '../components/ImportMapperModal';
 
 const PH_HEADERS = [
   '#', 'Date', 'EMP ID', 'Employee Name', 'Department',
@@ -25,7 +26,7 @@ function useSettings() {
       .then(setS)
       .catch((e) => { console.warn('Settings load failed:', e); setS({ alignments: {} }); });
   }, []);
-  return s || { alignments: {} };
+  return s || { alignments: {}, prodMatrix: [] };
 }
 
 function parseHhmm(val) {
@@ -34,6 +35,29 @@ function parseHhmm(val) {
   const [h, m] = s.split(':').map(Number);
   if (isNaN(h) || isNaN(m)) return NaN;
   return h * 60 + m;
+}
+
+function parseWorkHrs(v) {
+  if (!v) return 8;
+  const p = String(v).split(':');
+  return p.length === 2 ? parseInt(p[0]) + parseInt(p[1]) / 60 : (parseFloat(v) || 8);
+}
+
+function lookupProdMatrix(expYymm, prodMatrix) {
+  if (!expYymm || !prodMatrix || !prodMatrix.length) return 0;
+  const [y, m] = String(expYymm).split(':').map(Number);
+  if (isNaN(y)) return 0;
+  const expYears = y + (isNaN(m) ? 0 : m) / 12;
+  for (const entry of prodMatrix) {
+    const label = entry.label || '';
+    const dM = label.match(/^([\d.]+)\s*-\s*([\d.]+)/);
+    const gM = label.match(/^>\s*([\d.]+)/);
+    let minExp = 0, maxExp = Infinity;
+    if (dM) { minExp = parseFloat(dM[1]); maxExp = parseFloat(dM[2]); }
+    else if (gM) { minExp = parseFloat(gM[1]); }
+    if (expYears >= minExp && expYears <= maxExp) return parseFloat(entry.max) || 0;
+  }
+  return 0;
 }
 
 function toHhmm(val) {
@@ -181,6 +205,11 @@ export default function ProjectHours({ toast, initialTab }) {
   const [saving, setSaving] = useState(false);
   const [editingRow, setEditingRow] = useState(null); // for editing Act Eff Hrs
 
+  // Import state
+  const [phImportOpen, setPhImportOpen] = useState(false);
+  const [phImportReplace, setPhImportReplace] = useState(false);
+  const [phImporting, setPhImporting] = useState(false);
+
   // Log tab filters
   const [filterEmp, setFilterEmp] = useState('All');
   const [filterProj, setFilterProj] = useState('All');
@@ -304,6 +333,22 @@ export default function ProjectHours({ toast, initialTab }) {
     const m = {};
     (Array.isArray(employees) ? employees : []).forEach((e) => {
       if (e[0]) m[e[0]] = parseFloat(e[7]) || 0.75;
+    });
+    return m;
+  }, [employees]);
+
+  const empExperienceMap = useMemo(() => {
+    const m = {};
+    (Array.isArray(employees) ? employees : []).forEach((e) => {
+      if (e[0]) m[e[0]] = e[18] || '';
+    });
+    return m;
+  }, [employees]);
+
+  const empTeamLeadMapById = useMemo(() => {
+    const m = {};
+    (Array.isArray(employees) ? employees : []).forEach((e) => {
+      if (e[0]) m[e[0]] = e[3] || '';
     });
     return m;
   }, [employees]);
@@ -595,18 +640,38 @@ export default function ProjectHours({ toast, initialTab }) {
   // ── Target data ─────────────────────────────────────────────────────────
   const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   useEffect(() => {
-    const key = `divTarget_${aYear}_${aMonthIdx}`;
-    try {
-      const saved = JSON.parse(localStorage.getItem(key));
-      if (saved) { setDivisionTarget(saved.divisionTarget ?? ''); setTeamTargets(saved.teamTargets || {}); }
-      else { setDivisionTarget(''); setTeamTargets({}); }
-    } catch { setDivisionTarget(''); setTeamTargets({}); }
+    api.getDivTargets(aYear, aMonthIdx)
+      .then((dt) => { setDivisionTarget(dt.divisionTarget ?? ''); setTeamTargets(dt.targets || {}); })
+      .catch(() => { setDivisionTarget(''); setTeamTargets({}); });
   }, [aYear, aMonthIdx]);
   const dt = parseFloat(divisionTarget) || 0;
   const tlTotalTargets = useMemo(() => {
     const m = {}; Object.entries(teamTargets).forEach(([tl, v]) => { m[tl] = parseFloat(v) || 0; }); return m;
   }, [teamTargets]);
   const totalTargetSum = Object.values(tlTotalTargets).reduce((s, v) => s + v, 0);
+
+  // Working days in target month (Mon–Fri, no holiday adjustment on client)
+  const workingDaysTarget = useMemo(() => {
+    let count = 0;
+    const daysInMonth = new Date(aYear, aMonthIdx + 1, 0).getDate();
+    for (let d = 1; d <= daysInMonth; d++) {
+      const day = new Date(aYear, aMonthIdx, d).getDay();
+      if (day !== 0 && day !== 6) count++;
+    }
+    return count;
+  }, [aYear, aMonthIdx]);
+
+  // Per-team total prod-matrix capacity for proportional target allocation
+  const tlCapForTarget = useMemo(() => {
+    const m = {};
+    (Array.isArray(employees) ? employees : []).forEach((e) => {
+      if (!e[0]) return;
+      const tl = e[3]; if (!tl) return;
+      const cap = lookupProdMatrix(e[18] || '', sett.prodMatrix) * workingDaysTarget;
+      if (cap > 0) m[tl] = (m[tl] || 0) + cap;
+    });
+    return m;
+  }, [employees, sett.prodMatrix, workingDaysTarget]);
 
   // ── Target-month client hrs (independent of analytics filters) ──────────
   const targetMonthRows = useMemo(() => {
@@ -664,6 +729,7 @@ export default function ProjectHours({ toast, initialTab }) {
       if (!key) return;
       if (!map[key]) map[key] = {
         empName: r[3] || key, empId: r[2] || '', dept: r[4] || '—',
+        teamLead: empTeamLeadMapById[r[2]] || '',
         sessions: 0, spentHrs: 0, reqHrs: 0, actHrs: 0,
       };
       const spent = parseFloat(r[8]) || 0;
@@ -674,14 +740,25 @@ export default function ProjectHours({ toast, initialTab }) {
       map[key].reqHrs += +(spent * ratio).toFixed(2);
       map[key].actHrs += parseFloat(r[10]) || 0;
     });
-    return Object.values(map).map((e) => ({
-      ...e,
-      spentHrs: +e.spentHrs.toFixed(2),
-      reqHrs: +e.reqHrs.toFixed(2),
-      actHrs: +e.actHrs.toFixed(2),
-      avgEff: e.reqHrs > 0 ? +(e.actHrs / e.reqHrs).toFixed(4) : 0,
-    })).sort((a, b) => b.spentHrs - a.spentHrs);
-  }, [analyticsRows, employeeRatioMap]);
+    return Object.values(map).map((e) => {
+      const empCap = lookupProdMatrix(empExperienceMap[e.empId] || '', sett.prodMatrix) * workingDaysTarget;
+      const tlTarget = tlTotalTargets[e.teamLead] || 0;
+      const tlCap = tlCapForTarget[e.teamLead] || 0;
+      const targetHrs = tlTarget > 0 && tlCap > 0 && empCap > 0
+        ? +((empCap / tlCap) * tlTarget).toFixed(2)
+        : empCap > 0
+        ? +empCap.toFixed(2)
+        : 0;
+      return {
+        ...e,
+        spentHrs: +e.spentHrs.toFixed(2),
+        reqHrs: +e.reqHrs.toFixed(2),
+        actHrs: +e.actHrs.toFixed(2),
+        avgEff: e.reqHrs > 0 ? +(e.actHrs / e.reqHrs).toFixed(4) : 0,
+        targetHrs,
+      };
+    }).sort((a, b) => b.spentHrs - a.spentHrs);
+  }, [analyticsRows, employeeRatioMap, empExperienceMap, empTeamLeadMapById, sett.prodMatrix, workingDaysTarget, tlTotalTargets, tlCapForTarget]);
 
   // ── Project-wise aggregation ────────────────────────────────────────────
   const projAnalytics = useMemo(() => {
@@ -793,6 +870,22 @@ export default function ProjectHours({ toast, initialTab }) {
     return m;
   }, [teamLeadAnalytics]);
 
+  // Capacity = Σ(Req Eff hrs/day from Productivity Matrix by experience) × 24 working days, active employees only
+  const tlCapacityPH = useMemo(() => {
+    const pm = sett.prodMatrix || [];
+    const m = {};
+    (Array.isArray(employees) ? employees : []).forEach((r) => {
+      const status = (r[6] || '').toLowerCase();
+      if (status && status !== 'active') return;
+      const tl = r[3];
+      if (!tl) return;
+      const dailyCap = lookupProdMatrix(r[18], pm);
+      if (dailyCap <= 0) return;
+      m[tl] = (m[tl] || 0) + dailyCap * 24;
+    });
+    return m;
+  }, [employees, sett.prodMatrix]);
+
   // Achieved = Client Hrs (filtered by analytics period); Gap = Target − Client Hrs
   const activeAchieved = aTeamLead !== 'All' ? (tlClientHrs[aTeamLead] || 0) : aTotalClientHrs;
 
@@ -859,7 +952,18 @@ export default function ProjectHours({ toast, initialTab }) {
     avgEff: +(p.avgEff * 100).toFixed(2),
   })), [projAnalytics]);
 
-  // ── Handlers ────────────────────────────────────────────────────────────
+  const doPhImport = async (mappedRows) => {
+    setPhImporting(true);
+    try {
+      const res = await api.importProjHours(mappedRows, phImportReplace);
+      toast.success(`${res.count} rows imported into PROJ_HOURS`);
+      setPhImportOpen(false);
+      setPhImportReplace(false);
+      load();
+    } catch (e) { toast.error(e.message); }
+    finally { setPhImporting(false); }
+  };
+
   const openAdd = () => {
     const today = new Date().toISOString().slice(0, 10);
     setForm([String(rows.length + 1), today, '', '', '', '', '', '', '', '', '', '', '', '']);
@@ -984,9 +1088,14 @@ export default function ProjectHours({ toast, initialTab }) {
         <div className="flex gap-2 shrink-0">
           <button onClick={load} className="btn-secondary"><RefreshCw size={14} /></button>
           {activeTab === 'log' && (
-            <button onClick={exportToExcel} className="btn-secondary flex items-center gap-1.5">
-              <Download size={14} /> <span className="hidden sm:inline">Export Excel</span>
-            </button>
+            <>
+              <button onClick={exportToExcel} className="btn-secondary flex items-center gap-1.5">
+                <Download size={14} /> <span className="hidden sm:inline">Export</span>
+              </button>
+              <button onClick={() => { setPhImportReplace(false); setPhImportOpen(true); }} className="btn-secondary flex items-center gap-1.5" title="Import PROJ_HOURS from Excel">
+                <Upload size={14} /> <span className="hidden sm:inline">Import</span>
+              </button>
+            </>
           )}
           <button onClick={openAdd} className="btn-primary flex items-center gap-1.5"><Plus size={14} /> Log Hours</button>
         </div>
@@ -1309,28 +1418,25 @@ export default function ProjectHours({ toast, initialTab }) {
               {showTargetSettings && (
                 <div className="flex items-center gap-2">
                   <button onClick={() => {
-                    const dtVal = parseFloat(divisionTarget);
-                    if (!dtVal || dtVal <= 0) return toast.error('Set a division target first');
                     const tlNames = teamLeadOptions.length ? teamLeadOptions : teamLeadAnalytics.map((t) => t.teamLead).filter(Boolean);
-                    const totalCH = tlNames.reduce((s, tl) => s + (targetMonthTlClientHrs[tl] || 0), 0);
+                    const totalCap = tlNames.reduce((s, tl) => s + (tlCapacityPH[tl] || 0), 0);
+                    if (totalCap <= 0) return toast.error('No employee capacity found. Ensure active employees have Work Hrs/Day and Req Eff Ratio set.');
+                    const existingDt = parseFloat(divisionTarget);
+                    const dtVal = existingDt > 0 ? existingDt : totalCap;
+                    if (!(existingDt > 0)) setDivisionTarget(parseFloat(dtVal.toFixed(1)));
                     const dist = {};
-                    if (totalCH <= 0) {
-                      const per = dtVal / tlNames.length;
-                      tlNames.forEach((tl) => { dist[tl] = parseFloat(per.toFixed(2)); });
-                    } else {
-                      let allocated = 0;
-                      tlNames.forEach((tl, i) => {
-                        if (i === tlNames.length - 1) dist[tl] = parseFloat((dtVal - allocated).toFixed(2));
-                        else { const v = ((targetMonthTlClientHrs[tl] || 0) / totalCH) * dtVal; dist[tl] = parseFloat(v.toFixed(2)); allocated += v; }
-                      });
-                    }
+                    let allocated = 0;
+                    tlNames.forEach((tl, i) => {
+                      if (i === tlNames.length - 1) dist[tl] = parseFloat((dtVal - allocated).toFixed(2));
+                      else { const v = ((tlCapacityPH[tl] || 0) / totalCap) * dtVal; dist[tl] = parseFloat(v.toFixed(2)); allocated += v; }
+                    });
                     setTeamTargets(dist);
-                    toast.success('Targets auto-distributed');
+                    toast.success(`Targets distributed by team capacity (Work Hrs × Req Eff % × 24 days)`);
                   }} className="btn-secondary text-xs">Auto-Distribute</button>
                   <button onClick={() => {
-                    const key = `divTarget_${aYear}_${aMonthIdx}`;
-                    localStorage.setItem(key, JSON.stringify({ divisionTarget, teamTargets }));
-                    toast.success(`Targets saved for ${MONTHS[aMonthIdx]} ${aYear}`);
+                    api.saveDivTargets(aYear, aMonthIdx, divisionTarget, teamTargets)
+                      .then(() => { toast.success(`Targets saved for ${MONTHS[aMonthIdx]} ${aYear}`); setShowTargetSettings(false); })
+                      .catch((e) => toast.error(e.message));
                   }} className="btn-primary text-xs"><Save size={12} /> Save</button>
                 </div>
               )}
@@ -1450,11 +1556,12 @@ export default function ProjectHours({ toast, initialTab }) {
               {/* Table */}
               <div className="card overflow-x-auto mb-6">
                 <p className="text-sm font-semibold text-slate-700 mb-4">Employee Performance ({empAnalytics.length})</p>
-                <table className="min-w-[560px] w-full text-xs">
+                <table className="min-w-[640px] w-full text-xs">
                   <thead className="bg-slate-50">
                     <tr>
                       <th className="th text-xs">Employee</th>
                       <th className="th text-xs">Dept</th>
+                      <th className="th text-xs text-right" title={`Prod-matrix capacity × working days (${workingDaysTarget} days) in ${MONTHS[aMonthIdx]} ${aYear}${Object.keys(tlTotalTargets).length > 0 ? ', proportional from div target' : ''}`}>Target Hrs</th>
                       <th className="th text-xs text-center">Sessions</th>
                       <th className="th text-xs text-right">Spent Hrs</th>
                       <th className="th text-xs text-right">Req Eff Hrs</th>
@@ -1464,7 +1571,7 @@ export default function ProjectHours({ toast, initialTab }) {
                   </thead>
                   <tbody>
                     {empAnalytics.length === 0 ? (
-                      <tr><td colSpan={7} className="td text-center text-slate-400 py-6">No data for selected filters</td></tr>
+                      <tr><td colSpan={8} className="td text-center text-slate-400 py-6">No data for selected filters</td></tr>
                     ) : empAnalytics.map((e, i) => (
                       <tr key={i} className="tr">
                         <td className="td font-medium">
@@ -1472,6 +1579,7 @@ export default function ProjectHours({ toast, initialTab }) {
                           <p className="text-slate-400 font-normal">{e.empId}</p>
                         </td>
                         <td className="td text-slate-500">{e.dept}</td>
+                        <td className="td text-right text-amber-600 font-semibold">{e.targetHrs > 0 ? toHhmm(e.targetHrs * 60) : '—'}</td>
                         <td className="td text-center text-slate-500">{e.sessions}</td>
                         <td className="td text-right font-semibold text-indigo-600">{toHhmm(e.spentHrs)}</td>
                         <td className="td text-right text-violet-600">{e.reqHrs > 0 ? toHhmm(e.reqHrs) : '—'}</td>
@@ -1484,6 +1592,7 @@ export default function ProjectHours({ toast, initialTab }) {
                     <tfoot className="bg-slate-50 border-t border-slate-200">
                       <tr>
                         <td className="td font-semibold" colSpan={2}>Total</td>
+                        <td className="td text-right font-semibold text-amber-600">{toHhmm(empAnalytics.reduce((s, e) => s + e.targetHrs, 0) * 60)}</td>
                         <td className="td text-center font-semibold">{empAnalytics.reduce((s, e) => s + e.sessions, 0)}</td>
                         <td className="td text-right font-semibold text-indigo-600">{toHhmm(aTotalSpent)}</td>
                         <td className="td text-right font-semibold text-violet-600">{aTotalReq > 0 ? toHhmm(aTotalReq) : '—'}</td>
@@ -2195,7 +2304,30 @@ export default function ProjectHours({ toast, initialTab }) {
         );
       })()}
 
-      {/* Add entry modal */}
+      {/* PROJ_HOURS import modal */}
+      <ImportMapperModal
+        open={phImportOpen}
+        onClose={() => setPhImportOpen(false)}
+        title="Import Project Hours from Excel"
+        systemCols={PH_HEADERS}
+        requiredCols={[2, 5, 8]}
+        preferredSheet="PROJ_HOURS"
+        onImport={doPhImport}
+        importing={phImporting}
+        extraOptions={
+          <div className="rounded-lg bg-amber-50 border border-amber-200 px-4 py-3">
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input type="checkbox" className="mt-0.5 accent-amber-600 cursor-pointer"
+                checked={phImportReplace} onChange={(e) => setPhImportReplace(e.target.checked)} />
+              <div>
+                <p className="text-sm font-medium text-amber-800">Clear existing PROJ_HOURS before import</p>
+                <p className="text-xs text-amber-600 mt-0.5">Use when seeding a new month's baseline. Unchecked = append to existing rows.</p>
+              </div>
+            </label>
+          </div>
+        }
+      />
+
       {modal && (
         <Modal title="Log Project Hours" onClose={() => setModal(false)} wide>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

@@ -53,6 +53,7 @@ export default function MonthEndSummary({ toast }) {
   const [expandedEmp, setExpandedEmp] = useState(null);
   const [divisionTarget, setDivisionTarget] = useState(0);
   const [teamTargets, setTeamTargets] = useState({});
+  const [closingExporting, setClosingExporting] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -77,33 +78,199 @@ export default function MonthEndSummary({ toast }) {
   const nextMonthLabel = month === 11 ? `${MONTHS[0]} ${year + 1}` : `${MONTHS[(month + 1) % 12]} ${month === 11 ? year + 1 : year}`;
   const nextMonthFullLabel = month === 11 ? `${MONTHS_FULL[0]} ${year + 1}` : `${MONTHS_FULL[month + 1]} ${year}`;
 
-  // ── Export closing month data ────────────────────────────────────────
-  const exportCloseMonth = () => {
-    if (!data) return;
-    const wb = XLSX.utils.book_new();
+  // ── Export closing month data (team-lead-wise, with QA/QC & feedback) ──
+  const exportCloseMonth = async () => {
+    if (!data || closingExporting) return;
+    setClosingExporting(true);
+    try {
+      const [qaqcRes, fbRes, intFbRes] = await Promise.all([
+        api.qaqcProjects(),
+        api.feedbackProjects(),
+        api.internalFeedbackProjects(),
+      ]);
 
-    const empHeaders = ['EMP ID', 'Employee Name', 'Department', 'Team Lead', 'Designation', 'Status', 'Req Eff Ratio', 'Work Hrs/Day', 'Target Hrs', 'Spent Hrs', 'Req Eff Hrs', 'Act Eff Hrs', 'Client Hrs', 'Sessions', 'Achieved %', 'Gap Hrs', 'Experience'];
-    const empRows = data.employeeSummary.map((e) => [
-      e.empId, e.name, e.dept, e.teamLead, e.designation, e.status,
-      e.reqEffRatio, e.workHrsDay, e.targetHrs, e.spentHrs,
-      +(e.reqEffHrs / 60).toFixed(2), +(e.actEffHrs / 60).toFixed(2), e.clientHrs, e.sessions,
-      e.achievedPct, e.gapHrs, e.experience,
-    ]);
-    const empWS = XLSX.utils.aoa_to_sheet([empHeaders, ...empRows]);
-    XLSX.utils.book_append_sheet(wb, empWS, 'Employee Summary');
+      const wb = XLSX.utils.book_new();
+      const w = (n) => ({ wch: n });
+      const pct = (num, den) => den > 0 ? +((num / den) * 100).toFixed(1) : 0;
+      const byTL = (a, b) =>
+        (a[4] || a.teamLead || '').localeCompare(b[4] || b.teamLead || '') ||
+        (a[0] || a.projId || a.empId || '').localeCompare(b[0] || b.projId || b.empId || '');
 
-    const projHeaders = ['Proj ID', 'Project Name', 'Client', 'Status', 'Team Lead', 'Client Hrs', 'Cumulative Spent Hrs', 'Month Spent Hrs', 'Month Req Eff Hrs', 'Month Act Eff Hrs', 'Month Sessions', 'Month Employees', 'Remaining Hrs', 'Month Eff'];
-    const projRows = data.projectSummary.map((p) => [
-      p.projId, p.projName, p.client, p.status, p.teamLead,
-      p.clientHrs, p.cumulativeSpentHrs, p.monthSpentHrs,
-      +(p.monthReqEffHrs / 60).toFixed(2), +(p.monthActEffHrs / 60).toFixed(2), p.monthSessions,
-      p.monthEmployees, p.monthRemaining, p.monthEff,
-    ]);
-    const projWS = XLSX.utils.aoa_to_sheet([projHeaders, ...projRows]);
-    XLSX.utils.book_append_sheet(wb, projWS, 'Project Summary');
+      // ── 1. SUMMARY ────────────────────────────────────────────────────
+      const activeEmps   = data.employeeSummary.filter((e) => e.sessions > 0).length;
+      const activeProjs  = data.projectSummary.filter((p) => p.monthSpentHrs > 0).length;
+      const totalSpent   = data.totals.totalSpentHrs;
+      const totalClient  = data.totals.totalClientHrs;
+      const totalReq     = +(data.employeeSummary.reduce((s, e) => s + e.reqEffHrs, 0) / 60).toFixed(2);
+      const totalAct     = +(data.employeeSummary.reduce((s, e) => s + e.actEffHrs, 0) / 60).toFixed(2);
+      const summaryAoa = [
+        [`Closing Month Summary — ${MONTHS_FULL[month]} ${year}`],
+        [],
+        ['Metric', 'Value'],
+        ['Active Employees', activeEmps, `of ${data.employeeSummary.length} total`],
+        ['In Progress Projects', activeProjs, `of ${data.projectSummary.length} total`],
+        ['Total Spent Hrs', totalSpent],
+        ['Total Client Hrs', totalClient],
+        ['Req Eff Hrs', totalReq],
+        ['Act Eff Hrs', totalAct],
+        ['Overall Eff %', totalReq > 0 ? +((totalAct / totalReq) * 100).toFixed(1) : 0],
+        ['Division Target Hrs', divisionTarget],
+        ['Carry-over Projects', data.nextMonthProjects.length],
+        ['Remaining Client Hrs', data.totals.totalRemainingHrs],
+        [],
+        ['Team Lead Targets'],
+        ['Team Lead', 'Target Hrs'],
+        ...Object.entries(teamTargets).sort(([a],[b]) => a.localeCompare(b)).map(([tl, hrs]) => [tl, hrs]),
+      ];
+      const sumWS = XLSX.utils.aoa_to_sheet(summaryAoa);
+      sumWS['!cols'] = [30, 14, 22].map(w);
+      XLSX.utils.book_append_sheet(wb, sumWS, 'Summary');
 
-    XLSX.writeFile(wb, `Month_End_${monthLabel.replace(' ', '_')}.xlsx`);
-    toast.success('Closing month data exported');
+      // ── 2. BY TEAM LEAD ───────────────────────────────────────────────
+      const tlMap = {};
+      const ensureTL = (tl) => { if (!tlMap[tl]) tlMap[tl] = { emps: [], projs: [] }; };
+      data.employeeSummary.forEach((e) => { const tl = e.teamLead || 'Unassigned'; ensureTL(tl); tlMap[tl].emps.push(e); });
+      data.projectSummary.forEach((p) => { const tl = p.teamLead || 'Unassigned'; ensureTL(tl); tlMap[tl].projs.push(p); });
+
+      const tlHeaders = ['Team Lead', 'Target Hrs', 'Total Emps', 'Active Emps', 'Projects Active', `${monthLabel} Spent Hrs`, 'Client Hrs Allocated', 'Req Eff Hrs', 'Act Eff Hrs', 'Req Eff %', 'Actual Eff %', 'Emp Avg Eff', 'Client Hrs Earned', 'Achieved %'];
+      const tlRows = Object.entries(tlMap).sort(([a],[b]) => a.localeCompare(b)).map(([tl, d]) => {
+        const target        = teamTargets[tl] || 0;
+        const activeE       = d.emps.filter((e) => e.sessions > 0).length;
+        const activeP       = d.projs.filter((p) => p.monthSpentHrs > 0).length;
+        const monthSpent    = +d.projs.reduce((s, p) => s + p.monthSpentHrs, 0).toFixed(2);
+        const clientAlloc   = +d.projs.reduce((s, p) => s + p.clientHrs, 0).toFixed(2);
+        const empSpent      = +d.emps.reduce((s, e) => s + e.spentHrs, 0).toFixed(2);
+        const reqEff        = +(d.emps.reduce((s, e) => s + e.reqEffHrs, 0) / 60).toFixed(2);
+        const actEff        = +(d.emps.reduce((s, e) => s + e.actEffHrs, 0) / 60).toFixed(2);
+        const clientEarned  = +d.emps.reduce((s, e) => s + e.clientHrs, 0).toFixed(2);
+        const achieved      = target > 0 ? +((clientEarned / target) * 100).toFixed(1) : 0;
+        return [tl, target, d.emps.length, activeE, activeP, monthSpent, clientAlloc, reqEff, actEff,
+          pct(reqEff, empSpent), pct(actEff, empSpent), pct(actEff, reqEff),
+          clientEarned, achieved];
+      });
+      const tlWS = XLSX.utils.aoa_to_sheet([tlHeaders, ...tlRows]);
+      tlWS['!cols'] = [22, 12, 11, 11, 14, 14, 16, 12, 12, 10, 11, 11, 14, 10].map(w);
+      XLSX.utils.book_append_sheet(wb, tlWS, 'By Team Lead');
+
+      // ── 3. EMPLOYEE SUMMARY (sorted by team lead) ─────────────────────
+      const empHeaders = ['EMP ID', 'Employee Name', 'Department', 'Team Lead', 'Designation', 'Status', 'Target Hrs', 'Spent Hrs', 'Req Eff Hrs', 'Act Eff Hrs', 'Req Eff %', 'Actual Eff %', 'Emp Avg Eff', 'Client Hrs Earned', 'Sessions', 'Achieved %', 'Gap Hrs'];
+      const empRows = [...data.employeeSummary]
+        .sort((a, b) => (a.teamLead || '').localeCompare(b.teamLead || '') || a.name.localeCompare(b.name))
+        .map((e) => {
+          const reqH = +(e.reqEffHrs / 60).toFixed(2);
+          const actH = +(e.actEffHrs / 60).toFixed(2);
+          return [
+            e.empId, e.name, e.dept, e.teamLead, e.designation, e.status,
+            e.targetHrs, e.spentHrs, reqH, actH,
+            pct(reqH, e.spentHrs), pct(actH, e.spentHrs), pct(actH, reqH),
+            e.clientHrs, e.sessions, e.achievedPct, e.gapHrs,
+          ];
+        });
+      const empWS = XLSX.utils.aoa_to_sheet([empHeaders, ...empRows]);
+      empWS['!cols'] = [13, 24, 16, 20, 18, 10, 11, 10, 12, 12, 10, 11, 11, 14, 9, 11, 9].map(w);
+      XLSX.utils.book_append_sheet(wb, empWS, 'Employee Summary');
+
+      // ── 4. PROJECT SUMMARY (sorted by team lead) ──────────────────────
+      const projHeaders = ['Proj ID', 'Project Name', 'Client', 'Status', 'Team Lead', 'Client Hrs', 'Cumulative Spent Hrs', `${monthLabel} Spent Hrs`, 'Req Eff Hrs', 'Act Eff Hrs', 'Sessions', 'Employees', 'Remaining Hrs', 'Eff %'];
+      const projRows = [...data.projectSummary]
+        .sort(byTL)
+        .map((p) => [
+          p.projId, p.projName, p.client, p.status, p.teamLead,
+          p.clientHrs, p.cumulativeSpentHrs, p.monthSpentHrs,
+          +(p.monthReqEffHrs / 60).toFixed(2), +(p.monthActEffHrs / 60).toFixed(2),
+          p.monthSessions, p.monthEmployees, p.monthRemaining,
+          p.monthEff ? +(p.monthEff * 100).toFixed(1) : 0,
+        ]);
+      const projWS = XLSX.utils.aoa_to_sheet([projHeaders, ...projRows]);
+      projWS['!cols'] = [10, 32, 14, 12, 20, 10, 16, 14, 12, 12, 9, 9, 13, 8].map(w);
+      XLSX.utils.book_append_sheet(wb, projWS, 'Project Summary');
+
+      // ── 5. QA/QC PROJECTS (sorted by team lead) ───────────────────────
+      // r[8]=SpentMin, r[9]=ReqEffMin, r[10]=ActEffMin — all in MINUTES
+      const qaqcHeaders = ['Proj ID', 'Project Name', 'Client', 'Status', 'Team Lead', 'Client Hrs', 'QC Spent Hrs', 'QC Req Eff Hrs', 'QC Act Eff Hrs', 'Req Eff %', 'Actual Eff %', 'Emp Avg Eff', 'Remaining Hrs', 'Leading Person'];
+      const qaqcRows = [...(qaqcRes.data || [])]
+        .sort(byTL)
+        .map((r) => {
+          const sp = +((parseFloat(r[8]) || 0) / 60).toFixed(2);
+          const rq = +((parseFloat(r[9]) || 0) / 60).toFixed(2);
+          const ac = +((parseFloat(r[10]) || 0) / 60).toFixed(2);
+          return [
+            r[0], r[1], r[2], r[3], r[4],
+            parseFloat(r[7]) || 0, sp, rq, ac,
+            pct(rq, sp), pct(ac, sp), pct(ac, rq),
+            parseFloat(r[12]) || 0, r[21] || r[4] || '',
+          ];
+        });
+      const qaqcWS = XLSX.utils.aoa_to_sheet([qaqcHeaders, ...qaqcRows]);
+      qaqcWS['!cols'] = [10, 32, 14, 12, 20, 10, 13, 14, 14, 10, 11, 11, 13, 20].map(w);
+      XLSX.utils.book_append_sheet(wb, qaqcWS, 'QA-QC Projects');
+
+      // ── 6. CLIENT FEEDBACK (sorted by team lead) ──────────────────────
+      const fbHeaders = ['Proj ID', 'Project Name', 'Client', 'Status', 'Team Lead', 'Client Hrs', 'FB Spent Hrs', 'FB Req Eff Hrs', 'FB Act Eff Hrs', 'Req Eff %', 'Actual Eff %', 'Emp Avg Eff', 'Client FB Hrs', 'Remaining Hrs', 'Leading Person'];
+      const fbRows = [...(fbRes.data || [])]
+        .sort(byTL)
+        .map((r) => {
+          const sp = +((parseFloat(r[8]) || 0) / 60).toFixed(2);
+          const rq = +((parseFloat(r[9]) || 0) / 60).toFixed(2);
+          const ac = +((parseFloat(r[10]) || 0) / 60).toFixed(2);
+          return [
+            r[0], r[1], r[2], r[3], r[4],
+            parseFloat(r[7]) || 0, sp, rq, ac,
+            pct(rq, sp), pct(ac, sp), pct(ac, rq),
+            parseFloat(r[19]) || 0, parseFloat(r[12]) || 0, r[23] || r[4] || '',
+          ];
+        });
+      const fbWS = XLSX.utils.aoa_to_sheet([fbHeaders, ...fbRows]);
+      fbWS['!cols'] = [10, 32, 14, 12, 20, 10, 13, 14, 14, 10, 11, 11, 12, 13, 20].map(w);
+      XLSX.utils.book_append_sheet(wb, fbWS, 'Client Feedback');
+
+      // ── 7. INTERNAL FEEDBACK (sorted by team lead) ────────────────────
+      const intFbHeaders = ['Proj ID', 'Project Name', 'Client', 'Status', 'Team Lead', 'Client Hrs', 'Int FB Spent Hrs', 'Int FB Req Eff Hrs', 'Int FB Act Eff Hrs', 'Req Eff %', 'Actual Eff %', 'Emp Avg Eff', 'Remaining Hrs', 'Leading Person'];
+      const intFbRows = [...(intFbRes.data || [])]
+        .sort(byTL)
+        .map((r) => {
+          const sp = +((parseFloat(r[8]) || 0) / 60).toFixed(2);
+          const rq = +((parseFloat(r[9]) || 0) / 60).toFixed(2);
+          const ac = +((parseFloat(r[10]) || 0) / 60).toFixed(2);
+          return [
+            r[0], r[1], r[2], r[3], r[4],
+            parseFloat(r[7]) || 0, sp, rq, ac,
+            pct(rq, sp), pct(ac, sp), pct(ac, rq),
+            parseFloat(r[12]) || 0, r[22] || r[4] || '',
+          ];
+        });
+      const intFbWS = XLSX.utils.aoa_to_sheet([intFbHeaders, ...intFbRows]);
+      intFbWS['!cols'] = [10, 32, 14, 12, 20, 10, 16, 18, 18, 10, 11, 11, 13, 20].map(w);
+      XLSX.utils.book_append_sheet(wb, intFbWS, 'Internal Feedback');
+
+      // ── 8. EMP × PROJECT DETAIL (sorted by team lead → employee) ──────
+      const phDetHeaders = ['Team Lead', 'EMP ID', 'Employee Name', 'Department', 'Project ID', 'Project Name', 'Client', 'Cumul Spent Hrs', 'Cumul Req Eff Hrs', 'Cumul Act Eff Hrs', 'Req Eff %', 'Actual Eff %', 'Emp Avg Eff'];
+      const phDetRows = [...(data.consolidatedProjHrs || [])]
+        .sort((a, b) => (a.teamLead || '').localeCompare(b.teamLead || '') || (a.empId || '').localeCompare(b.empId || '') || (a.projId || '').localeCompare(b.projId || ''))
+        .map((e) => {
+          const sp = +(e.spent / 60).toFixed(2);
+          const rq = +(e.reqEff / 60).toFixed(2);
+          const ac = +(e.actEff / 60).toFixed(2);
+          return [
+            e.teamLead, e.empId, e.empName, e.dept,
+            e.projId, e.projName, e.client,
+            sp, rq, ac,
+            pct(rq, sp), pct(ac, sp), pct(ac, rq),
+          ];
+        });
+      const phDetWS = XLSX.utils.aoa_to_sheet([phDetHeaders, ...phDetRows]);
+      phDetWS['!cols'] = [20, 13, 24, 14, 10, 32, 14, 14, 16, 16, 10, 11, 11].map(w);
+      XLSX.utils.book_append_sheet(wb, phDetWS, 'Emp x Project Detail');
+
+      XLSX.writeFile(wb, `Closing_Data_${monthLabel.replace(' ', '_')}.xlsx`);
+      toast.success(
+        `Closing month data exported — ${data.projectSummary.length} projects · ${data.employeeSummary.length} employees · ${(qaqcRes.data||[]).length} QA/QC · ${(fbRes.data||[]).length} client FB · ${(intFbRes.data||[]).length} int FB`
+      );
+    } catch (e) {
+      toast.error('Export failed: ' + e.message);
+    } finally {
+      setClosingExporting(false);
+    }
   };
 
   // ── Export next month import template ────────────────────────────────
@@ -111,11 +278,10 @@ export default function MonthEndSummary({ toast }) {
     if (!data) return;
     const wb = XLSX.utils.book_new();
 
-    // Use carry-over list if populated, otherwise fall back to all In Progress projects
     const carryOver = data.nextMonthProjects.length > 0
       ? data.nextMonthProjects
       : data.projectSummary
-          .filter((p) => p.status === 'In Progress')
+          .filter((p) => p.status === 'In Progress' && p.clientHrs > 0 && p.clientHrs - p.cumulativeSpentHrs > 0)
           .map((p) => ({
             projId: p.projId,
             projName: p.projName,
@@ -123,42 +289,90 @@ export default function MonthEndSummary({ toast }) {
             teamLead: p.teamLead,
             clientHrs: p.clientHrs,
             totalSpentToDate: p.cumulativeSpentHrs,
-            remainingClientHrs: p.monthRemaining,
+            remainingClientHrs: +(p.clientHrs - p.cumulativeSpentHrs).toFixed(2),
             status: p.status,
           }));
 
-    // Closing month project summary used to fill carry-over data
     const closingProjMap = {};
     data.projectSummary.forEach((p) => { closingProjMap[p.projId] = p; });
 
-    const projHeaders = ['Proj ID', 'Project Name | Month Year', 'Client', 'Team Lead', 'Client Hrs', 'Closing Month Spent Hrs', 'Cumulative Spent Hrs', 'Remaining Client Hrs', 'Status'];
-    const projRows = carryOver.map((p) => {
+    // ── Sheet 1: PROJECTS — import-ready, matches Projects import template ──
+    // 'Total Spent Hrs' (col I) is pre-filled with cumulative spent so the
+    // new month continues from where the closing month left off.
+    const projImportHeaders = ['Proj ID', 'Project Name', 'Client', 'Status', 'Team Lead', 'Start (Day#)', 'End (Day#)', 'Client Hrs', 'Total Spent Hrs', 'Req Eff Hrs', 'Act Eff Hrs', 'Proj Eff %', 'Remarks', 'Remaining Hrs'];
+    const projImportRows = carryOver.map((p) => [
+      p.projId,
+      `${p.projName} | ${nextMonthFullLabel}`,
+      p.client,
+      'In Progress',
+      p.teamLead,
+      '', '',
+      p.clientHrs,
+      p.totalSpentToDate,   // cumulative — carries over to next month
+      '', '', '', '',
+      p.remainingClientHrs,
+    ]);
+    const projImportWS = XLSX.utils.aoa_to_sheet([projImportHeaders, ...projImportRows]);
+    projImportWS['!cols'] = projImportHeaders.map(() => ({ wch: 20 }));
+    XLSX.utils.book_append_sheet(wb, projImportWS, 'PROJECTS');
+
+    // ── Sheet 2: Reference — full carry-over detail for checking ──────────
+    const refHeaders = ['Proj ID', 'Project Name', 'Client', 'Team Lead', 'Original Client Hrs', `${MONTHS[month]} ${year} Spent Hrs`, 'Cumulative Spent Hrs', 'Remaining Hrs', 'Status'];
+    const refRows = carryOver.map((p) => {
       const closing = closingProjMap[p.projId] || {};
       return [
         p.projId,
-        `${p.projName} | ${nextMonthFullLabel}`,
+        p.projName,
         p.client,
         p.teamLead,
         p.clientHrs,
-        closing.monthSpentHrs != null ? +closing.monthSpentHrs.toFixed(2) : '',
+        closing.monthSpentHrs != null ? +closing.monthSpentHrs.toFixed(2) : 0,
         p.totalSpentToDate,
         p.remainingClientHrs,
         p.status,
       ];
     });
-    const projWS = XLSX.utils.aoa_to_sheet([projHeaders, ...projRows]);
-    XLSX.utils.book_append_sheet(wb, projWS, 'Next Month Projects');
+    const refWS = XLSX.utils.aoa_to_sheet([refHeaders, ...refRows]);
+    refWS['!cols'] = refHeaders.map(() => ({ wch: 22 }));
+    XLSX.utils.book_append_sheet(wb, refWS, 'Carry-Over Reference');
 
+    // ── Sheet 3: EMPLOYEES — active employees for next month ──────────────
     const empHeaders = ['EMP ID', 'Employee Name', 'Department', 'Team Lead', 'Designation', 'Req Eff Ratio', 'Work Hrs/Day', 'Experience'];
     const empRows = data.nextMonthEmployees.map((e) => [
       e.empId, e.name, e.dept, e.teamLead, e.designation,
       e.reqEffRatio, e.workHrsDay, e.experience,
     ]);
     const empWS = XLSX.utils.aoa_to_sheet([empHeaders, ...empRows]);
+    empWS['!cols'] = empHeaders.map(() => ({ wch: 18 }));
     XLSX.utils.book_append_sheet(wb, empWS, 'Next Month Employees');
 
+    // ── Sheet 4: PROJ_HOURS — one consolidated row per (employee × project) ──
+    // Contains cumulative totals for all months up to closing month.
+    // Import this via Sync from Excel to seed the new month's PROJ_HOURS,
+    // so the running cumulative is preserved after clearing individual sessions.
+    const phImportHeaders = ['#', 'Date', 'EMP ID', 'Employee Name', 'Department', 'Project ID', 'Project Name', 'Client', 'Spent Hrs', 'Req Eff Hrs', 'Act Eff Hrs', 'Eff %', 'Remarks', 'Team Lead'];
+    const closeDate = `${year}-${String(month + 1).padStart(2, '0')}-${new Date(year, month + 1, 0).getDate()}`;
+    const phImportRows = (data.consolidatedProjHrs || []).map((e, i) => {
+      const effPct = e.reqEff > 0 ? +((e.actEff / e.reqEff) * 100).toFixed(1) : 0;
+      return [
+        i + 1,
+        closeDate,
+        e.empId, e.empName, e.dept,
+        e.projId, e.projName, e.client,
+        e.spent,   // minutes (matches PROJ_HOURS storage unit)
+        e.reqEff,  // minutes
+        e.actEff,  // minutes
+        effPct,
+        `Carry-over ${MONTHS[month]} ${year}`,
+        e.teamLead,
+      ];
+    });
+    const phImportWS = XLSX.utils.aoa_to_sheet([phImportHeaders, ...phImportRows]);
+    phImportWS['!cols'] = phImportHeaders.map((_, i) => ({ wch: i < 2 ? 6 : i >= 6 ? 22 : 14 }));
+    XLSX.utils.book_append_sheet(wb, phImportWS, 'PROJ_HOURS');
+
     XLSX.writeFile(wb, `Next_Month_Import_${nextMonthFullLabel.replace(' ', '_')}.xlsx`);
-    toast.success(`Next month import template exported for ${nextMonthFullLabel}`);
+    toast.success(`Next month import exported — ${carryOver.length} projects · ${(data.consolidatedProjHrs || []).length} emp×project sessions`);
   };
 
   // ── Derived stats ────────────────────────────────────────────────────
@@ -174,9 +388,14 @@ export default function MonthEndSummary({ toast }) {
     const totalActEffMin = data.employeeSummary.reduce((s, e) => s + e.actEffHrs, 0);
     const totalReqEffHrs = totalReqEffMin / 60;
     const totalActEffHrs = totalActEffMin / 60;
+    // When a division target is set, use it as the canonical display value for
+    // "Total Target Hrs" so both stat cards show the same number. Employees whose
+    // team has no div-target fall back to prod-matrix capacity on the server,
+    // which can push the raw employee sum above the division target.
+    const displayTotalTarget = effectiveTarget > 0 ? effectiveTarget : +totalTarget.toFixed(2);
     return {
       activeEmps,
-      totalTarget: +totalTarget.toFixed(2),
+      totalTarget: displayTotalTarget,
       totalAchieved: +totalAchieved.toFixed(2),
       totalReqEffHrs: +totalReqEffHrs.toFixed(2),
       totalActEffHrs: +totalActEffHrs.toFixed(2),
@@ -219,8 +438,8 @@ export default function MonthEndSummary({ toast }) {
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
             <StatCard icon={Users} label="Active Employees" value={stats.activeEmps} sub={`of ${data.employeeSummary.length} total`} color="bg-indigo-500" />
             <StatCard icon={Briefcase} label="In Progress Projects" value={stats.inProgressProjs} sub={`of ${data.projectSummary.length} total`} color="bg-violet-500" />
-            <StatCard icon={Target} label="Total Target Hrs" value={decToHHMM(stats.totalTarget)} sub="employee capacity" color="bg-amber-500" />
-            <StatCard icon={Target} label="Division Target" value={stats.divisionTarget > 0 ? decToHHMM(stats.divisionTarget) : 'Not set'} sub={stats.achievedVsDivision > 0 ? `${stats.achievedVsDivision}% achieved` : ''} color="bg-purple-500" />
+            <StatCard icon={Target} label="Total Target Hrs" value={decToHHMM(stats.totalTarget)} sub={stats.divisionTarget > 0 ? 'assigned per div targets' : 'prod-matrix capacity'} color="bg-amber-500" />
+            <StatCard icon={Target} label="Division Target" value={stats.divisionTarget > 0 ? decToHHMM(stats.divisionTarget) : 'Not set'} sub={stats.achievedVsDivision > 0 ? `${stats.achievedVsDivision}% client hrs achieved` : 'not set for this month'} color="bg-purple-500" />
           </div>
 
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
@@ -233,8 +452,8 @@ export default function MonthEndSummary({ toast }) {
       )}
 
       <div className="flex flex-wrap gap-3 mb-6">
-        <button onClick={exportCloseMonth} className="btn-primary flex items-center gap-2">
-          <Download size={14} /> Export Closing Month Data
+        <button onClick={exportCloseMonth} disabled={closingExporting} className="btn-primary flex items-center gap-2">
+          <Download size={14} /> {closingExporting ? 'Exporting…' : 'Export Closing Month Data'}
         </button>
         <button onClick={exportNextMonth} className="btn-secondary flex items-center gap-2">
           <Upload size={14} /> Export Next Month Import Template
@@ -461,7 +680,6 @@ export default function MonthEndSummary({ toast }) {
                 ))}
               </div>
             </>)}
-            )}
           </div>
         </div>
       )}
@@ -483,13 +701,13 @@ export default function MonthEndSummary({ toast }) {
                   <th className="th">Name</th>
                   <th className="th">Dept</th>
                   <th className="th">Team Lead</th>
-                  <th className="th text-right">Target Hrs</th>
+                  <th className="th text-right" title="Proportional share of team's division target by prod-matrix capacity">Target Hrs</th>
                   <th className="th text-right">Spent Hrs</th>
                   <th className="th text-right">Req Eff Hrs</th>
                   <th className="th text-right">Act Eff Hrs</th>
                   <th className="th text-right">Client Hrs</th>
                   <th className="th text-center">Sessions</th>
-                  <th className="th text-center">Achieved</th>
+                  <th className="th text-center">Achieved %</th>
                   <th className="th text-center">Gap</th>
                 </tr>
               </thead>
@@ -841,10 +1059,18 @@ export default function MonthEndSummary({ toast }) {
           <div className="card xl:col-span-2 bg-indigo-50 border-indigo-200">
             <h3 className="text-sm font-semibold text-indigo-700 mb-2">How to use this data</h3>
             <ol className="text-xs text-indigo-600 space-y-1 list-decimal list-inside">
-              <li><strong>Export Closing Month</strong> — Download the Excel file with employee and project summaries for {monthLabel} as an archival record.</li>
-              <li><strong>Export Next Month Import</strong> — Download the import template containing active employees and projects with remaining hours for {nextMonthLabel}.</li>
-              <li>Use the <strong>Next Month Import</strong> Excel to seed your new month cycle in the Data Management section.</li>
-              <li>Projects marked <strong>Completed</strong> or with <strong>0 remaining hours</strong> will not appear in the carry-over list.</li>
+              <li><strong>Export Closing Month</strong> — Archive the full employee and project summary for {monthLabel}.</li>
+              <li><strong>Export Next Month Import</strong> — Downloads an Excel with 4 sheets:
+                <ul className="list-disc list-inside ml-4 mt-0.5 space-y-0.5">
+                  <li><strong>PROJECTS</strong> — import-ready with carry-over projects and cumulative spent hrs</li>
+                  <li><strong>PROJ_HOURS</strong> — one consolidated row per employee × project with all-time cumulative hours (minutes), date = {monthLabel} close</li>
+                  <li><strong>Carry-Over Reference</strong> — detail view for verification</li>
+                  <li><strong>Next Month Employees</strong> — active employee list</li>
+                </ul>
+              </li>
+              <li>Clear existing <strong>PROJ_HOURS</strong> data if starting fresh, then go to <strong>Data Management → Sync from Excel</strong> and upload the downloaded file. Both <strong>PROJECTS</strong> and <strong>PROJ_HOURS</strong> sheets will be imported.</li>
+              <li>The imported <strong>PROJ_HOURS</strong> preserves the cumulative baseline — new sessions logged next month add on top of these totals automatically.</li>
+              <li>Projects marked <strong>Completed</strong> or with <strong>0 remaining hours</strong> are excluded from the PROJECTS carry-over sheet.</li>
             </ol>
           </div>
         </div>

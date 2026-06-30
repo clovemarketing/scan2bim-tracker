@@ -1,10 +1,10 @@
 import { useEffect, useState, useMemo, useCallback } from 'react';
 import { Plus, Pencil, Trash2, RefreshCw, Briefcase, Clock, TrendingUp, CheckCircle2, Upload, Search, UserCheck, UserX, ChevronDown, ChevronRight, X, Save, Edit3 } from 'lucide-react';
-import * as XLSX from 'xlsx';
 import { api } from '../lib/api';
 import DataTable from '../components/DataTable';
 import Modal from '../components/Modal';
 import Badge from '../components/Badge';
+import ImportMapperModal from '../components/ImportMapperModal';
 
 
 const PROJ_H = [
@@ -358,13 +358,6 @@ export default function Projects({ toast }) {
 
   // ── Import state ──
   const [importOpen, setImportOpen] = useState(false);
-  const [importStep, setImportStep] = useState('upload');
-  const [excelHeaders, setExcelHeaders] = useState([]);
-  const [excelData, setExcelData] = useState([]);
-  const [sheetDataMap, setSheetDataMap] = useState({});
-  const [sheetNames, setSheetNames] = useState([]);
-  const [selectedSheet, setSelectedSheet] = useState('');
-  const [mapping, setMapping] = useState({});
   const [importing, setImporting] = useState(false);
 
   // ── Assignments tab state ──
@@ -382,79 +375,15 @@ export default function Projects({ toast }) {
   const [assignSelected, setAssignSelected] = useState(new Set());
   const [assignSearch, setAssignSearch] = useState('');
 
-  const SYSTEM_COLS = ['Proj ID', 'Project Name', 'Client', 'Status', 'Team Lead', 'Start (Day#)', 'End (Day#)', 'Client Hrs', 'Total Spent Hrs', 'Req Eff Hrs', 'Act Eff Hrs', 'Proj Eff %', 'Remarks', 'Remaining Hrs'];
-  const REQUIRED_COLS = [0, 1];
+  const PROJ_IMPORT_COLS = ['Proj ID', 'Project Name', 'Client', 'Status', 'Team Lead', 'Start (Day#)', 'End (Day#)', 'Client Hrs', 'Total Spent Hrs', 'Req Eff Hrs', 'Act Eff Hrs', 'Proj Eff %', 'Remarks', 'Remaining Hrs'];
+  const PROJ_REQUIRED_COLS = [0, 1];
 
-  const autoMapColumns = useCallback((hdrs) => {
-    const map = {};
-    SYSTEM_COLS.forEach((sysCol, sysIdx) => {
-      const sysKey = sysCol.toLowerCase().replace(/[^a-z0-9]/g, '');
-      const matchIdx = hdrs.findIndex((exH) => {
-        const exKey = (exH || '').toString().toLowerCase().replace(/[^a-z0-9]/g, '');
-        return exKey === sysKey || exKey.includes(sysKey) || sysKey.includes(exKey);
-      });
-      if (matchIdx >= 0) map[sysIdx] = matchIdx;
-    });
-    return map;
-  }, []);
-
-  const applySheet = useCallback((all, name) => {
-    const sd = all[name];
-    if (!sd) return;
-    setExcelHeaders(sd.headers);
-    setExcelData(sd.rows);
-    setSelectedSheet(name);
-    setMapping(autoMapColumns(sd.headers));
-  }, [autoMapColumns]);
-
-  const handleFileSelect = useCallback((file) => {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        const wb = XLSX.read(new Uint8Array(e.target.result), { type: 'array' });
-        const names = wb.SheetNames;
-        if (!names.length) return toast.error('No sheets found in the Excel file');
-        const all = {};
-        names.forEach((n) => {
-          const ws = wb.Sheets[n];
-          const json = XLSX.utils.sheet_to_json(ws, { header: 1 });
-          all[n] = { headers: json[0] || [], rows: json.slice(1).filter((r) => r.some((c) => c !== '' && c != null)) };
-        });
-        setSheetDataMap(all);
-        setSheetNames(names);
-        applySheet(all, names[0]);
-        setImportStep('mapping');
-      } catch (err) { toast.error('Failed to parse Excel: ' + err.message); }
-    };
-    reader.readAsArrayBuffer(file);
-  }, [applySheet]);
-
-  const handleSheetChange = useCallback((name) => {
-    applySheet(sheetDataMap, name);
-  }, [sheetDataMap, applySheet]);
-
-  const mappedRows = useMemo(() => {
-    if (!excelData.length || !Object.keys(mapping).length) return [];
-    return excelData.map((row) => {
-      const sysRow = Array(SYSTEM_COLS.length).fill('');
-      Object.entries(mapping).forEach(([sysIdx, exIdx]) => {
-        sysRow[parseInt(sysIdx)] = row[exIdx] !== undefined ? String(row[exIdx]) : '';
-      });
-      return sysRow;
-    });
-  }, [excelData, mapping]);
-
-  const doImport = async () => {
-    if (!mappedRows.length) return toast.error('No data to import');
-    const missing = REQUIRED_COLS.filter((i) => mapping[i] === undefined);
-    if (missing.length) return toast.error('Please map required columns: ' + missing.map((i) => SYSTEM_COLS[i]).join(', '));
+  const doImport = async (mappedRows) => {
     setImporting(true);
     try {
       const res = await api.importProjects(mappedRows);
       toast.success(`${res.count} projects imported successfully`);
       setImportOpen(false);
-      setImportStep('upload');
-      setMapping({});
       load();
     } catch (e) { toast.error(e.message); }
     finally { setImporting(false); }
@@ -1608,143 +1537,17 @@ export default function Projects({ toast }) {
       )}
 
       {/* ── Import Modal ── */}
-      {importOpen && (
-        <Modal title="Import Projects from Excel" onClose={() => { setImportOpen(false); setImportStep('upload'); setMapping({}); setExcelHeaders([]); setExcelData([]); setSheetDataMap({}); setSheetNames([]); setSelectedSheet(''); }} wide>
-          {importStep === 'upload' ? (
-            <div>
-              <div className="border-2 border-dashed border-slate-200 rounded-xl p-14 text-center hover:border-indigo-300 transition-colors cursor-pointer mb-4"
-                onDragOver={(e) => e.preventDefault()}
-                onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) handleFileSelect(f); }}
-                onClick={() => document.getElementById('import-file-input').click()}>
-                <Upload size={36} className="mx-auto mb-3 text-slate-300" />
-                <p className="text-sm text-slate-500 mb-1">Drop your Excel file here or click to browse</p>
-                <p className="text-xs text-slate-400">Supports .xlsx, .xls</p>
-                <input id="import-file-input" type="file" accept=".xlsx,.xls" className="hidden"
-                  onChange={(e) => { const f = e.target.files[0]; if (f) { handleFileSelect(f); e.target.value = ''; } }} />
-              </div>
-              <div className="text-center">
-                <a href={api.projectTemplateUrl()} className="text-xs text-indigo-600 hover:underline font-medium" target="_blank" rel="noreferrer">
-                  Download template →
-                </a>
-              </div>
-            </div>
-          ) : (
-            <div>
-              {sheetNames.length > 1 && (
-                <div className="mb-4 flex items-center gap-2">
-                  <label className="text-xs text-slate-500 font-medium">Sheet:</label>
-                  <select className="input w-auto text-xs" value={selectedSheet}
-                    onChange={(e) => handleSheetChange(e.target.value)}>
-                    {sheetNames.map((n) => <option key={n}>{n}</option>)}
-                  </select>
-                </div>
-              )}
-
-              {/* Matched / skipped summary */}
-              {(() => {
-                const matchedCount = Object.keys(mapping).length;
-                const skippedCount = SYSTEM_COLS.length - matchedCount;
-                return (
-                  <div className="flex items-center gap-3 mb-3">
-                    <span className="text-xs px-2 py-1 rounded-full bg-emerald-50 text-emerald-700 font-medium border border-emerald-200">
-                      ✓ {matchedCount} column{matchedCount !== 1 ? 's' : ''} matched
-                    </span>
-                    {skippedCount > 0 && (
-                      <span className="text-xs px-2 py-1 rounded-full bg-slate-100 text-slate-500 font-medium border border-slate-200">
-                        — {skippedCount} skipped (will be blank)
-                      </span>
-                    )}
-                    <span className="text-xs text-red-400 ml-auto">* Required</span>
-                  </div>
-                );
-              })()}
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 mb-4 max-h-52 overflow-y-auto">
-                {SYSTEM_COLS.map((sysCol, sysIdx) => {
-                  const isReq = REQUIRED_COLS.includes(sysIdx);
-                  const isMapped = mapping[sysIdx] !== undefined;
-                  return (
-                    <div key={sysIdx} className={`flex items-center gap-2 rounded-lg px-1.5 py-0.5 ${isMapped ? 'bg-emerald-50/60' : ''}`}>
-                      <span className={`text-xs w-36 shrink-0 truncate font-medium ${isMapped ? 'text-emerald-800' : 'text-slate-400'}`}>
-                        {isMapped ? '✓' : '—'} {sysCol} {isReq && <span className="text-red-400">*</span>}
-                      </span>
-                      <select className="input text-xs flex-1 py-1"
-                        value={mapping[sysIdx] !== undefined ? mapping[sysIdx] : ''}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          setMapping((prev) => {
-                            const next = { ...prev };
-                            if (val === '') delete next[sysIdx];
-                            else next[sysIdx] = parseInt(val);
-                            return next;
-                          });
-                        }}>
-                        <option value="">— Skip —</option>
-                        {excelHeaders.map((h, i) => (
-                          <option key={i} value={i}>{h || `Column ${i + 1}`}</option>
-                        ))}
-                      </select>
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* Preview — only mapped columns */}
-              {(() => {
-                const mappedCols = SYSTEM_COLS.map((h, i) => ({ h, i })).filter(({ i }) => mapping[i] !== undefined);
-                return (
-                  <>
-                    <p className="text-xs text-slate-400 mb-2">
-                      Preview — {mappedRows.length} rows · showing {mappedCols.length} mapped column{mappedCols.length !== 1 ? 's' : ''}:
-                    </p>
-                    <div className="max-h-52 overflow-auto border border-slate-200 rounded-lg">
-                      <table className="w-full text-xs">
-                        <thead>
-                          <tr className="bg-slate-50 sticky top-0">
-                            {mappedCols.map(({ h, i }) => (
-                              <th key={i} className="px-2 py-1.5 text-left font-medium border-b border-slate-200 whitespace-nowrap text-slate-600">
-                                {h}
-                              </th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {mappedRows.slice(0, 10).map((row, ri) => (
-                            <tr key={ri} className={ri % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'}>
-                              {mappedCols.map(({ i }) => (
-                                <td key={i} className="px-2 py-1 border-b border-slate-100 truncate max-w-28 text-slate-700">
-                                  {row[i] || <span className="text-slate-300">—</span>}
-                                </td>
-                              ))}
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                    {mappedRows.length > 10 && (
-                      <p className="text-xs text-slate-400 mt-1">… and {mappedRows.length - 10} more rows</p>
-                    )}
-                  </>
-                );
-              })()}
-
-              <div className="flex justify-between items-center mt-6">
-                <button className="btn-secondary text-xs" onClick={() => { setImportStep('upload'); setMapping({}); setExcelHeaders([]); setExcelData([]); setSheetDataMap({}); setSheetNames([]); setSelectedSheet(''); }}>
-                  ← Back
-                </button>
-                <div className="flex gap-2">
-                  <button className="btn-secondary" onClick={() => { setImportOpen(false); setImportStep('upload'); setMapping({}); setExcelHeaders([]); setExcelData([]); setSheetDataMap({}); setSheetNames([]); setSelectedSheet(''); }}>
-                    Cancel
-                  </button>
-                  <button className="btn-primary" onClick={doImport} disabled={importing || !mappedRows.length}>
-                    {importing ? 'Importing…' : `Import ${mappedRows.length} Projects`}
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-        </Modal>
-      )}
+      <ImportMapperModal
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        title="Import Projects from Excel"
+        systemCols={PROJ_IMPORT_COLS}
+        requiredCols={PROJ_REQUIRED_COLS}
+        preferredSheet="PROJECTS"
+        templateUrl={api.projectTemplateUrl()}
+        onImport={doImport}
+        importing={importing}
+      />
 
       {/* ── Edit Assignment Modal ── */}
       {mapEditModal && (

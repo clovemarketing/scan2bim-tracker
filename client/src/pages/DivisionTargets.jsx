@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo, useCallback } from 'react';
-import { RefreshCw, Save, Edit2, X, Users, Briefcase, TrendingUp, TrendingDown, Target, Award, BarChart3, PieChart } from 'lucide-react';
+import { RefreshCw, Save, Edit2, X, Users, Briefcase, TrendingUp, TrendingDown, Target, Award, BarChart3, PieChart, CheckCircle2, Clock } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   ResponsiveContainer, PieChart as RePie, Pie, Cell, LabelList,
@@ -17,6 +17,29 @@ const toHhmm = (min) => {
   const a = Math.abs(Math.round(min));
   return `${String(Math.floor(a / 60)).padStart(2, '0')}:${String(a % 60).padStart(2, '0')}`;
 };
+const parseWorkHrs = (v) => {
+  if (!v) return 8;
+  const p = String(v).split(':');
+  return p.length === 2 ? parseInt(p[0]) + parseInt(p[1]) / 60 : (parseFloat(v) || 8);
+};
+
+// Look up employee's daily Req Eff hours from productivity matrix using YY:MM experience
+function lookupProdMatrix(expYymm, prodMatrix) {
+  if (!expYymm || !prodMatrix || !prodMatrix.length) return 0;
+  const [y, m] = String(expYymm).split(':').map(Number);
+  if (isNaN(y)) return 0;
+  const expYears = y + (isNaN(m) ? 0 : m) / 12;
+  for (const entry of prodMatrix) {
+    const label = entry.label || '';
+    const dM = label.match(/^([\d.]+)\s*-\s*([\d.]+)/);
+    const gM = label.match(/^>\s*([\d.]+)/);
+    let minExp = 0, maxExp = Infinity;
+    if (dM) { minExp = parseFloat(dM[1]); maxExp = parseFloat(dM[2]); }
+    else if (gM) { minExp = parseFloat(gM[1]); }
+    if (expYears >= minExp && expYears <= maxExp) return parseFloat(entry.max) || 0;
+  }
+  return 0;
+}
 
 export default function DivisionTargets({ toast, currentUser }) {
   const readOnly = currentUser?.role === 'Team Lead';
@@ -29,19 +52,22 @@ export default function DivisionTargets({ toast, currentUser }) {
   const [projectHours, setProjectHours] = useState([]);
   const [divisionTarget, setDivisionTarget] = useState('');
   const [teamTargets, setTeamTargets] = useState({});
+  const [prodMatrix, setProdMatrix] = useState([]);
   const [editing, setEditing] = useState(false);
   const [activeTab, setActiveTab] = useState('targets');
   const [filterTeamLead, setFilterTeamLead] = useState('All');
+  const [filterProjStatus, setFilterProjStatus] = useState('All');
 
   const load = async () => {
     setLoading(true);
     try {
-      const [p, e, ph, dt] = await Promise.all([api.projects(), api.employees(), api.projectHours(), api.getDivTargets(year, month)]);
+      const [p, e, ph, dt, sett] = await Promise.all([api.projects(), api.employees(), api.projectHours(), api.getDivTargets(year, month), api.settings()]);
       setProjects(p.data || []);
       setEmployees(e.data || []);
       setProjectHours(ph.data || []);
       setDivisionTarget(dt.divisionTarget ?? '');
       setTeamTargets(dt.targets || {});
+      setProdMatrix(sett.prodMatrix || []);
       setEditing(false);
     } catch (e) { toast.error(e.message); }
     finally { setLoading(false); }
@@ -72,17 +98,61 @@ export default function DivisionTargets({ toast, currentUser }) {
   // ── Filter-aware aggregations ───────────────────────────────────────────
   const projIdsInFilter = useMemo(() => new Set(filteredPH.map((r) => r[5]).filter(Boolean)), [filteredPH]);
 
+  const projStatusMap = useMemo(() => {
+    const m = {};
+    projects.forEach((r) => { if (r[0]) m[r[0]] = r[3] || ''; });
+    return m;
+  }, [projects]);
+
+  const projIdsCompleted = useMemo(() =>
+    new Set([...projIdsInFilter].filter((pid) => projStatusMap[pid] === 'Completed')),
+    [projIdsInFilter, projStatusMap]);
+
+  const projIdsIP = useMemo(() =>
+    new Set([...projIdsInFilter].filter((pid) => projStatusMap[pid] === 'In Progress')),
+    [projIdsInFilter, projStatusMap]);
+
+  const projIdsForTable = useMemo(() => {
+    if (filterProjStatus === 'Completed') return projIdsCompleted;
+    if (filterProjStatus === 'In Progress') return projIdsIP;
+    return projIdsInFilter;
+  }, [filterProjStatus, projIdsCompleted, projIdsIP, projIdsInFilter]);
+
   const tlClientHrs = useMemo(() => {
     const m = {};
     projects.forEach((r) => {
       const pid = r[0];
-      if (pid && projIdsInFilter.has(pid)) {
+      if (pid && projIdsForTable.has(pid)) {
         const tl = r[4]; const ch = parseFloat(r[7]) || 0;
         if (tl) m[tl] = (m[tl] || 0) + ch;
       }
     });
     return m;
-  }, [projects, projIdsInFilter]);
+  }, [projects, projIdsForTable]);
+
+  const tlClientHrsC = useMemo(() => {
+    const m = {};
+    projects.forEach((r) => {
+      const pid = r[0];
+      if (pid && projIdsCompleted.has(pid)) {
+        const tl = r[4]; const ch = parseFloat(r[7]) || 0;
+        if (tl) m[tl] = (m[tl] || 0) + ch;
+      }
+    });
+    return m;
+  }, [projects, projIdsCompleted]);
+
+  const tlClientHrsI = useMemo(() => {
+    const m = {};
+    projects.forEach((r) => {
+      const pid = r[0];
+      if (pid && projIdsIP.has(pid)) {
+        const tl = r[4]; const ch = parseFloat(r[7]) || 0;
+        if (tl) m[tl] = (m[tl] || 0) + ch;
+      }
+    });
+    return m;
+  }, [projects, projIdsIP]);
 
   const tlSpentHrs = useMemo(() => {
     const m = {};
@@ -97,29 +167,45 @@ export default function DivisionTargets({ toast, currentUser }) {
     const m = {}; employees.forEach((r) => { const tl = r[3]; if (tl) m[tl] = (m[tl] || 0) + 1; }); return m;
   }, [employees]);
 
+  // Capacity = Σ(Req Eff hrs/day from Productivity Matrix by experience) × 24 working days, active employees only
+  const tlCapacity = useMemo(() => {
+    const m = {};
+    employees.forEach((r) => {
+      const status = (r[6] || '').toLowerCase();
+      if (status && status !== 'active') return;
+      const tl = r[3];
+      if (!tl) return;
+      const dailyCap = lookupProdMatrix(r[18], prodMatrix);
+      if (dailyCap <= 0) return;
+      m[tl] = (m[tl] || 0) + dailyCap * 24;
+    });
+    return m;
+  }, [employees, prodMatrix]);
+
   const autoDistribute = useCallback(() => {
-    const dt = parseFloat(divisionTarget);
-    if (!dt || dt <= 0) return toast.error('Enter a valid division target');
-    const totalCH = teamLeads.reduce((s, tl) => s + (tlClientHrs[tl] || 0), 0);
-    const dist = {};
-    if (totalCH <= 0) {
-      const per = dt / teamLeads.length;
-      teamLeads.forEach((tl) => { dist[tl] = parseFloat(per.toFixed(2)); });
-    } else {
-      let allocated = 0;
-      teamLeads.forEach((tl, i) => {
-        if (i === teamLeads.length - 1) { dist[tl] = parseFloat((dt - allocated).toFixed(2)); }
-        else { const v = ((tlClientHrs[tl] || 0) / totalCH) * dt; dist[tl] = parseFloat(v.toFixed(2)); allocated += v; }
-      });
+    const totalCap = teamLeads.reduce((s, tl) => s + (tlCapacity[tl] || 0), 0);
+    if (totalCap <= 0) return toast.error('No employee capacity found. Ensure active employees have Work Hrs/Day and Req Eff Ratio set.');
+    // Use manually entered division target if set, otherwise derive from total team capacity
+    const dtVal = parseFloat(divisionTarget) > 0 ? parseFloat(divisionTarget) : totalCap;
+    if (!parseFloat(divisionTarget) || parseFloat(divisionTarget) <= 0) {
+      setDivisionTarget(parseFloat(dtVal.toFixed(1)));
     }
+    const dist = {};
+    let allocated = 0;
+    teamLeads.forEach((tl, i) => {
+      if (i === teamLeads.length - 1) { dist[tl] = parseFloat((dtVal - allocated).toFixed(2)); }
+      else { const v = ((tlCapacity[tl] || 0) / totalCap) * dtVal; dist[tl] = parseFloat(v.toFixed(2)); allocated += v; }
+    });
     setTeamTargets(dist);
-    toast.success('Targets auto-distributed proportionally');
-  }, [divisionTarget, teamLeads, tlClientHrs, toast]);
+    toast.success(`Division target ${parseFloat(divisionTarget) > 0 ? '' : 'set to ' + dtVal.toFixed(0) + ' h and '}distributed by team capacity (Work Hrs × Req Eff % × 24 days)`);
+  }, [divisionTarget, teamLeads, tlCapacity, toast]);
 
   const setTLTarget = (tl, val) => setTeamTargets((p) => ({ ...p, [tl]: val === '' ? '' : parseFloat(val) || 0 }));
 
   const totalTarget = useMemo(() => Object.values(teamTargets).reduce((s, v) => s + (parseFloat(v) || 0), 0), [teamTargets]);
   const totalClientHrs = useMemo(() => Object.values(tlClientHrs).reduce((s, v) => s + v, 0), [tlClientHrs]);
+  const totalClientHrsC = useMemo(() => Object.values(tlClientHrsC).reduce((s, v) => s + v, 0), [tlClientHrsC]);
+  const totalClientHrsI = useMemo(() => Object.values(tlClientHrsI).reduce((s, v) => s + v, 0), [tlClientHrsI]);
   const totalSpentHrs = useMemo(() => Object.values(tlSpentHrs).reduce((s, v) => s + v, 0), [tlSpentHrs]);
   const dt = parseFloat(divisionTarget) || 0;
   const targetDiff = dt > 0 ? totalTarget - dt : 0;
@@ -222,6 +308,41 @@ export default function DivisionTargets({ toast, currentUser }) {
             ))}
           </div>
 
+          {/* Completed vs In Progress breakdown */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-5">
+            <button
+              onClick={() => setFilterProjStatus(filterProjStatus === 'Completed' ? 'All' : 'Completed')}
+              className={`card flex items-center gap-4 text-left transition-all border-2 ${filterProjStatus === 'Completed' ? 'border-emerald-400 bg-emerald-50' : 'border-transparent hover:border-emerald-200 hover:bg-emerald-50/50'}`}
+            >
+              <div className="p-2.5 rounded-lg bg-emerald-100"><CheckCircle2 size={18} className="text-emerald-600" /></div>
+              <div className="flex-1 min-w-0">
+                <p className="text-xs text-slate-500 font-medium">Completed Projects</p>
+                <div className="flex items-baseline gap-3 flex-wrap">
+                  <p className="text-xl font-bold text-emerald-700">{totalClientHrsC.toFixed(0)} h</p>
+                  <p className="text-sm text-emerald-600">{dt > 0 ? ((totalClientHrsC / dt) * 100).toFixed(1) : '0'}% of target</p>
+                </div>
+              </div>
+              {filterProjStatus === 'Completed' && <span className="text-xs text-emerald-600 font-semibold shrink-0">Active Filter</span>}
+            </button>
+            <button
+              onClick={() => setFilterProjStatus(filterProjStatus === 'In Progress' ? 'All' : 'In Progress')}
+              className={`card flex items-center gap-4 text-left transition-all border-2 ${filterProjStatus === 'In Progress' ? 'border-blue-400 bg-blue-50' : 'border-transparent hover:border-blue-200 hover:bg-blue-50/50'}`}
+            >
+              <div className="p-2.5 rounded-lg bg-blue-100"><Clock size={18} className="text-blue-600" /></div>
+              <div className="flex-1 min-w-0">
+                <p className="text-xs text-slate-500 font-medium">In Progress Projects</p>
+                <div className="flex items-baseline gap-3 flex-wrap">
+                  <p className="text-xl font-bold text-blue-700">{totalClientHrsI.toFixed(0)} h</p>
+                  <p className="text-sm text-blue-600">{dt > 0 ? ((totalClientHrsI / dt) * 100).toFixed(1) : '0'}% of target</p>
+                </div>
+                {dt > 0 && totalClientHrsI > 0 && (
+                  <p className="text-xs text-slate-400 mt-0.5">Can deliver: {Math.max(0, dt - totalClientHrsC - totalClientHrsI).toFixed(0)} h still unassigned</p>
+                )}
+              </div>
+              {filterProjStatus === 'In Progress' && <span className="text-xs text-blue-600 font-semibold shrink-0">Active Filter</span>}
+            </button>
+          </div>
+
           {/* Target Setting Section */}
           <div className="card mb-5">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
@@ -232,7 +353,7 @@ export default function DivisionTargets({ toast, currentUser }) {
                 )}
                 {!readOnly && editing && (
                   <>
-                    <button onClick={autoDistribute} className="btn-secondary text-xs">Auto-Distribute</button>
+                    <button onClick={autoDistribute} className="btn-secondary text-xs" title="Distributes target proportionally by team capacity (Work Hrs × Req Eff % × 24 working days)">Auto-Distribute by Capacity</button>
                     <button onClick={() => { load(); setEditing(false); }} className="btn-secondary text-xs"><X size={12} /> Cancel</button>
                     <button onClick={saveTargets} className="btn-primary text-xs"><Save size={12} /> Save</button>
                   </>
@@ -259,11 +380,29 @@ export default function DivisionTargets({ toast, currentUser }) {
                     <th className="text-left px-3 py-2 font-medium text-slate-500">Team Lead</th>
                     <th className="text-right px-3 py-2 font-medium text-slate-500">Employees</th>
                     <th className="text-right px-3 py-2 font-medium text-slate-500">Target Hrs</th>
-                    <th className="text-right px-3 py-2 font-medium text-slate-500">Client Hrs</th>
+                    <th className="text-right px-3 py-2 font-medium text-slate-500">
+                      {filterProjStatus === 'In Progress' ? <span className="text-blue-600">IP Client Hrs</span>
+                        : filterProjStatus === 'Completed' ? <span className="text-emerald-600">Completed Hrs</span>
+                        : 'Client Hrs'}
+                    </th>
+                    {filterProjStatus === 'All' && (
+                      <th className="text-right px-3 py-2 font-medium text-emerald-600">Done Hrs</th>
+                    )}
+                    {filterProjStatus === 'All' && (
+                      <th className="text-right px-3 py-2 font-medium text-blue-600">IP Hrs</th>
+                    )}
                     <th className="text-right px-3 py-2 font-medium text-slate-500">Spent Hrs ({MONTHS[month]})</th>
-                    <th className="text-right px-3 py-2 font-medium text-slate-500">% Reached</th>
-                    <th className="text-right px-3 py-2 font-medium text-slate-500">% To Deliver</th>
-                    <th className="text-right px-3 py-2 font-medium text-slate-500">Gap</th>
+                    <th className="text-right px-3 py-2 font-medium text-slate-500">
+                      {filterProjStatus === 'In Progress' ? <span className="text-blue-600">% Reached (IP)</span>
+                        : filterProjStatus === 'Completed' ? <span className="text-emerald-600">% Reached (Done)</span>
+                        : '% Reached'}
+                    </th>
+                    <th className="text-right px-3 py-2 font-medium text-slate-500">
+                      {filterProjStatus === 'In Progress' ? <span className="text-blue-600">% To Deliver</span> : '% To Deliver'}
+                    </th>
+                    <th className="text-right px-3 py-2 font-medium text-slate-500">
+                      {filterProjStatus === 'In Progress' ? <span className="text-blue-600">Gap (Deliverable)</span> : 'Gap'}
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -284,7 +423,13 @@ export default function DivisionTargets({ toast, currentUser }) {
                             : <span className="text-slate-700 font-medium">{tgt.toFixed(1)}</span>
                           }
                         </td>
-                        <td className="px-3 py-2 text-right text-slate-700 font-medium">{ch.toFixed(1)}</td>
+                        <td className={`px-3 py-2 text-right font-medium ${filterProjStatus === 'Completed' ? 'text-emerald-700' : filterProjStatus === 'In Progress' ? 'text-blue-700' : 'text-slate-700'}`}>{ch.toFixed(1)}</td>
+                        {filterProjStatus === 'All' && (
+                          <td className="px-3 py-2 text-right text-emerald-600 text-xs">{(tlClientHrsC[tl] || 0).toFixed(1)}</td>
+                        )}
+                        {filterProjStatus === 'All' && (
+                          <td className="px-3 py-2 text-right text-blue-600 text-xs">{(tlClientHrsI[tl] || 0).toFixed(1)}</td>
+                        )}
                         <td className="px-3 py-2 text-right text-slate-600">{toHhmm(sh * 60)}</td>
                         <td className={`px-3 py-2 text-right font-semibold ${reached >= 100 ? 'text-emerald-600' : reached >= 85 ? 'text-amber-600' : 'text-red-500'}`}>
                           {reached.toFixed(1)}%
@@ -297,7 +442,7 @@ export default function DivisionTargets({ toast, currentUser }) {
                     );
                   })}
                   {activeTLs.length === 0 && (
-                    <tr><td colSpan={8} className="px-3 py-6 text-center text-slate-400">No team leads with data — assign employees to team leads first</td></tr>
+                    <tr><td colSpan={filterProjStatus === 'All' ? 10 : 8} className="px-3 py-6 text-center text-slate-400">No team leads with data — assign employees to team leads first</td></tr>
                   )}
                 </tbody>
                 <tfoot>
@@ -305,7 +450,9 @@ export default function DivisionTargets({ toast, currentUser }) {
                     <td className="px-3 py-2">Total</td>
                     <td className="px-3 py-2 text-right">{activeTLs.reduce((s, tl) => s + (tlEmpCount[tl] || 0), 0)}</td>
                     <td className="px-3 py-2 text-right">{totalTarget.toFixed(1)}</td>
-                    <td className="px-3 py-2 text-right">{totalClientHrs.toFixed(1)}</td>
+                    <td className={`px-3 py-2 text-right ${filterProjStatus === 'Completed' ? 'text-emerald-700' : filterProjStatus === 'In Progress' ? 'text-blue-700' : ''}`}>{totalClientHrs.toFixed(1)}</td>
+                    {filterProjStatus === 'All' && <td className="px-3 py-2 text-right text-emerald-600 text-xs">{totalClientHrsC.toFixed(1)}</td>}
+                    {filterProjStatus === 'All' && <td className="px-3 py-2 text-right text-blue-600 text-xs">{totalClientHrsI.toFixed(1)}</td>}
                     <td className="px-3 py-2 text-right">{toHhmm(totalSpentHrs * 60)}</td>
                     <td className={`px-3 py-2 text-right ${overallReached >= 100 ? 'text-emerald-600' : overallReached >= 85 ? 'text-amber-600' : 'text-red-500'}`}>
                       {overallReached.toFixed(1)}%
@@ -337,7 +484,9 @@ export default function DivisionTargets({ toast, currentUser }) {
                       </div>
                       <div className="flex flex-wrap gap-x-3 gap-y-1 mt-1.5">
                         <span>Target: <strong className="text-slate-700">{tgt.toFixed(1)}</strong></span>
-                        <span>Client: <strong className="text-emerald-600">{ch.toFixed(1)}</strong></span>
+                        <span>Client: <strong className={filterProjStatus === 'Completed' ? 'text-emerald-600' : filterProjStatus === 'In Progress' ? 'text-blue-600' : 'text-slate-700'}>{ch.toFixed(1)}</strong></span>
+                        {filterProjStatus === 'All' && <span className="text-emerald-600 text-xs">Done: <strong>{(tlClientHrsC[tl] || 0).toFixed(1)}</strong></span>}
+                        {filterProjStatus === 'All' && <span className="text-blue-600 text-xs">IP: <strong>{(tlClientHrsI[tl] || 0).toFixed(1)}</strong></span>}
                         <span>Spent: <strong className="text-violet-600">{toHhmm(sh * 60)}</strong></span>
                       </div>
                       <div className="flex flex-wrap gap-x-3 gap-y-1 mt-0.5">
@@ -371,9 +520,29 @@ export default function DivisionTargets({ toast, currentUser }) {
                 {teamLeads.map((tl) => <option key={tl}>{tl}</option>)}
               </select>
             </div>
-            {filterTeamLead !== 'All' && (
-              <button className="btn-secondary text-xs self-end" onClick={() => setFilterTeamLead('All')}>
-                Clear
+            <div className="w-full sm:w-auto">
+              <label className="label">Project Status</label>
+              <div className="flex gap-1.5 mt-1 flex-wrap">
+                {['All', 'In Progress', 'Completed'].map((s) => (
+                  <button
+                    key={s}
+                    onClick={() => setFilterProjStatus(s)}
+                    className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
+                      filterProjStatus === s
+                        ? s === 'Completed' ? 'bg-emerald-100 text-emerald-700 ring-1 ring-emerald-400'
+                          : s === 'In Progress' ? 'bg-blue-100 text-blue-700 ring-1 ring-blue-400'
+                          : 'bg-slate-200 text-slate-800 ring-1 ring-slate-400'
+                        : 'bg-white border border-slate-200 text-slate-500 hover:bg-slate-50'
+                    }`}
+                  >
+                    {s === 'All' ? 'All Projects' : s}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {(filterTeamLead !== 'All' || filterProjStatus !== 'All') && (
+              <button className="btn-secondary text-xs self-end" onClick={() => { setFilterTeamLead('All'); setFilterProjStatus('All'); }}>
+                Clear Filters
               </button>
             )}
             <div className="text-sm text-slate-500 self-end pb-2 ml-auto">

@@ -229,14 +229,10 @@ export default function TeamAnalytics({ toast }) {
   const load = async () => {
     setLoading(true);
     try {
-      const [ta, empRes] = await Promise.all([api.teamAnalytics(), api.employees()]);
+      const [ta, empRes, dt] = await Promise.all([api.teamAnalytics(), api.employees(), api.getDivTargets(year, month)]);
       setData(ta); setEmpRows(empRes.data || []);
-      const key = `divTarget_${year}_${month}`;
-      try {
-        const saved = JSON.parse(localStorage.getItem(key));
-        if (saved) { setDivisionTarget(saved.divisionTarget ?? ''); setTeamTargets(saved.teamTargets || {}); }
-        else { setDivisionTarget(''); setTeamTargets({}); }
-      } catch { setDivisionTarget(''); setTeamTargets({}); }
+      setDivisionTarget(dt.divisionTarget ?? '');
+      setTeamTargets(dt.targets || {});
     }
     catch (e) { toast.error(e.message); }
     finally { setLoading(false); }

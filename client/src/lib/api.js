@@ -199,6 +199,11 @@ export const api = {
     _bust('/project-hours');
     return r;
   },
+  importProjHours: async (rows, replace = false) => {
+    const r = await req('/project-hours/import', { method: 'POST', body: JSON.stringify({ rows, replace }) });
+    _bust('/project-hours');
+    return r;
+  },
 
   // Efficiency
   efficiency: () => req('/efficiency'),
